@@ -90,13 +90,11 @@ public class SolrServiceImpl implements SolrService {
 
     @Override
     public List<String> findBrokenEdition(PeriodRequest periodRequest) {
-        validateCorrectionRequest(periodRequest);
-
         List<String> notExistedEdition = new ArrayList<>();
         int start = 0;
         int batchNumber = 1;
 
-        SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
+       SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
         int currentItem = 0;
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");
@@ -110,9 +108,11 @@ public class SolrServiceImpl implements SolrService {
             for (SolrDocument doc : documents) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
-                log.debug("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
+                log.trace("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
                 editions = processDocument(doc, periodRequest.getCorrectionType());
-                notExistedEdition.addAll(editions);
+                if (!editions.isEmpty()) {
+                    notExistedEdition.addAll(editions);
+                }
             }
 
             if (documents.size() < BATCH_SIZE) {
@@ -147,12 +147,13 @@ public class SolrServiceImpl implements SolrService {
     private List<String> listOfNonExistentDocumentIds(String id, List<String> editionList) {
         List<String> notExistedEdition = new ArrayList<>();
 
-        log.debug("id:{} , editions: {}", id, String.join(",", editionList));
+        log.trace("list of editions size: {},  [{}]", id, String.join(",", editionList));
         List<String> editionIds = EditionUtils.buildEditionIds(id, editionList);
 
         for (String editionId : editionIds) {
             throwIfInterrupted("Correction processing was cancelled while checking document ids");
 
+            log.trace("check editions: {}", editionId);
             SolrQuery query = new SolrQuery();
             query.setQuery(String.format("%s:\"%s\"", SolrConstants.FIELD_ID, editionId));
             query.setRows(0); // Нам не нужны документы, только количество
@@ -172,27 +173,6 @@ public class SolrServiceImpl implements SolrService {
             }
         }
         return notExistedEdition;
-    }
-
-    private void validateCorrectionRequest(PeriodRequest periodRequest) {
-        if (periodRequest == null
-                || periodRequest.getCorrectionType() == null) {
-            throw new IllegalArgumentException("PeriodRequest must contain correctionType");
-        }
-
-        boolean hasDocumentIds = periodRequest.getDocumentIds() != null
-                && periodRequest.getDocumentIds().stream().anyMatch(id -> id != null && !id.isBlank());
-        boolean hasPeriodFilter = periodRequest.getStartPeriod() != null || periodRequest.getEndPeriod() != null;
-
-        if (!hasDocumentIds && !hasPeriodFilter) {
-            throw new IllegalArgumentException("PeriodRequest must contain documentIds or period boundaries");
-        }
-
-        if (periodRequest.getStartPeriod() != null
-                && periodRequest.getEndPeriod() != null
-                && periodRequest.getStartPeriod().isAfter(periodRequest.getEndPeriod())) {
-            throw new IllegalArgumentException("startPeriod must be earlier than or equal to endPeriod");
-        }
     }
 
     private List<String> listOfNonExistentDocumentEditions(String id, List<String> editionList) {

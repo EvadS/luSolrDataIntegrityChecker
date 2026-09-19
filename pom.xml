@@ -12,7 +12,7 @@
     <artifactId>luSolrCorrectionService</artifactId>
     <version>0.0.1</version>
     <name>luSolrCorrectionService</name>
-    <description>luSolrCorrectionService</description>
+    <description>REST API for launching tasks to retrieve data from Solr, tracking execution status, and managing the task lifecycle.</description>
     <url/>
     <licenses>
         <license/>
@@ -137,6 +137,13 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

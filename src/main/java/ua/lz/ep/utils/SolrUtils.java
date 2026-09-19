@@ -19,7 +19,7 @@ public class SolrUtils {
     public static SolrQuery createCorrectRequest(PeriodRequest periodRequest){
         validatePeriodRequest(periodRequest);
 
-        SolrQuery solrQuery = new SolrQuery();
+       SolrQuery solrQuery = new SolrQuery();
         solrQuery.addField(SolrConstants.FIELD_ID);
         solrQuery.addField(SolrConstants.FIELD_CURRENT_EDITION);
         solrQuery.addField(SolrConstants.FIELD_EDITION_LIST_IDS);

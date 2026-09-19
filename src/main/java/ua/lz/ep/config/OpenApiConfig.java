@@ -11,6 +11,7 @@ import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.servers.Server;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -19,7 +20,11 @@ import java.util.List;
 @Configuration
 public class OpenApiConfig {
 
-    public static final String V_1 = "v1";
+    private final BuildProperties buildProperties;
+
+    public OpenApiConfig(BuildProperties buildProperties) {
+        this.buildProperties = buildProperties;
+    }
 
     @Bean
     public OpenAPI luSolrCorrectionOpenAPI() {
@@ -28,13 +33,22 @@ public class OpenApiConfig {
                         .url("/")
                         .description("Current application server")))
                 .components(new Components()
+                        .addSchemas("ApiErrorResponse", new Schema<>()
+                                .type("object")
+                                .description("Unified error response returned by the API")
+                                .addProperties("status", new Schema<>().type("integer").description("HTTP status code").example(400))
+                                .addProperties("error", new Schema<>().type("string").description("HTTP status reason").example("Bad Request"))
+                                .addProperties("message", new Schema<>().type("string").description("Human-readable error message").example("correctionType is required"))
+                                .addProperties("path", new Schema<>().type("string").description("Request path that produced the error").example("/api/correction/tasks"))
+                                .addProperties("timestamp", new Schema<>().type("string").format("date-time").description("Timestamp when the error occurred").example("2026-09-19T10:15:30"))
+                                .required(List.of("status", "error", "message", "path", "timestamp")))
                         .addResponses(OpenApiConstants.BAD_REQUEST_RESPONSE, errorResponse("The request is invalid or cannot be processed."))
                         .addResponses(OpenApiConstants.NOT_FOUND_RESPONSE, errorResponse("The requested resource was not found."))
                         .addResponses(OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE, errorResponse("Unexpected internal server error.")))
                 .info(new Info()
                         .title("luSolrCorrectionService API")
-                        .version(V_1)
-                        .description("REST API for launching Solr correction tasks, tracking execution status and managing task lifecycle.")
+                        .version(buildProperties.getVersion())
+                        .description(buildProperties.getName())
                         .contact(new Contact()
                                 .name("luSolrCorrectionService team"))
                         .license(new License()
