@@ -1,10 +1,12 @@
 package ua.lz.ep.service;
 
-import ua.lz.ep.dto.CorrectionRequest;
+import ua.lz.ep.dto.PeriodRequest;
+
+import java.util.List;
 
 public interface SolrService {
    boolean pingCollection(String collectionName);
 
-   void correctionProcessing(CorrectionRequest correctionRequest);
+    List<String> findBrokenEdition(PeriodRequest periodRequest);
 }
 
