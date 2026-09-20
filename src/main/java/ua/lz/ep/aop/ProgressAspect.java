@@ -20,14 +20,14 @@ public class ProgressAspect {
      *  Перехватываем вызов методов, помеченных @ReportProgress,
      *  где ожидаем аргументы (int processed, long total, int pageSize).
      */
-    @Before("@annotation(com.se.sample.aop.ReportProgress) && args(processed, total, pageSize)")
+    @Before("@annotation(ua.lz.ep.aop.ReportProgress) && args(processed, total, pageSize)")
     public void beforeReportProgress(int processed, long total, int pageSize) {
         double progress =  MathUtil.calculateProgress(processed, total);
         logger.info("Processed:{} documents, count:{}, progress: {}%", pageSize, total, progress);
     }
 
     /**     * Защита: если сигнатура вызова другая, попадём сюда — логируем аргументы     */
-    @Before("@annotation(com.se.sample.aop.ReportProgress)")
+    @Before("@annotation(ua.lz.ep.aop.ReportProgress)")
     public void beforeReportProgressFallback(org.aspectj.lang.JoinPoint jp) {
         Object[] args = jp.getArgs();
         logger.debug("ReportProgress invoked with args: {}", Arrays.toString(args));

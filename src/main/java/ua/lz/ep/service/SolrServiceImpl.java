@@ -99,7 +99,7 @@ public class SolrServiceImpl implements SolrService {
     public List<String> findBrokenEdition(PeriodRequest periodRequest, ProcessingTask processingTask) {
         List<String> notExistedEdition = new ArrayList<>();
         int currentPositions = 0;
-        int totalDocuments = 0;
+        int totalDocuments;
         int currentItem = 0;
 
         SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);

@@ -2,7 +2,6 @@ package ua.lz.ep.service.impl;
 
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import ua.lz.ep.config.StorageSettings;
@@ -10,7 +9,6 @@ import ua.lz.ep.dto.payload.ProcessingResult;
 import ua.lz.ep.service.StorageManager;
 
 import java.io.BufferedWriter;
-import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -37,8 +35,8 @@ public class FileStorageService implements StorageManager {
         String[] activeProfiles = environment.getActiveProfiles();
 
         // Если нет активных профилей — используем "default" чтобы путь был осмысленным
-        String profilesPart = (activeProfiles != null && activeProfiles.length > 0)
-                ? Arrays.stream(activeProfiles).collect(Collectors.joining("_"))
+        String profilesPart = activeProfiles.length > 0
+                ? String.join("_", activeProfiles)
                 : "default";
 
         // адрес дочерней директории для профиля
