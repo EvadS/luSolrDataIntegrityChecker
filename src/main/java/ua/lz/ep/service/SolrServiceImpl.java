@@ -118,7 +118,7 @@ public class SolrServiceImpl implements SolrService {
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
-                log.debug("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
+                log.trace("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
                 editions = processDocument(doc, periodRequest.getCorrectionType());
                 if (!editions.isEmpty()) {
                     notExistedEdition.addAll(editions);
