@@ -104,7 +104,7 @@ public class SolrServiceImpl implements SolrService {
 
         SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
         totalDocuments = getDocumentsNumber(solrQuery);
-        processingTask.setDocumentsNumber(totalDocuments);
+        updateDocumentInProcessingTask(processingTask, totalDocuments);
 
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");

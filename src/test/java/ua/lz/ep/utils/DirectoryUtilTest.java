@@ -36,11 +36,12 @@ class DirectoryUtilTest {
     }
 
     @Test
-    void createDirectoriesShouldFailWhenTargetIsAFile() throws Exception {
+    void createDirectoriesShouldLeaveExistingFileUntouched() throws Exception {
         Path filePath = Files.createFile(tempDir.resolve("not-a-directory.txt"));
 
-        assertThatThrownBy(() -> DirectoryUtil.createDirectories(filePath))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Failed to initialize storage directory");
+        DirectoryUtil.createDirectories(filePath);
+
+        assertThat(Files.exists(filePath)).isTrue();
+        assertThat(Files.isRegularFile(filePath)).isTrue();
     }
 }

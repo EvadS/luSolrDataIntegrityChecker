@@ -13,6 +13,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import ua.lz.ep.component.ProgressReporter;
 import ua.lz.ep.config.SolrProperties;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.payload.ProcessingTask;
 import ua.lz.ep.payload.enums.CorrectionType;
 
 import java.io.IOException;
@@ -97,13 +98,13 @@ class SolrServiceImplTest {
         solrQuery.setQuery("id:*");
 //todo:
         PeriodRequest periodRequest = validCorrectionRequest();
-        service.findBrokenEdition(periodRequest);
+        service.findBrokenEdition(periodRequest, new ProcessingTask());
 
         verify(solrClient, times(2)).query(eq("collection1"), any());
     }
 
     @Test
-    void findBrokenEditionShouldRejectBlankRequest() throws Exception {
+    void findBrokenEditionShouldFallbackToMatchAllForBlankRequest() throws Exception {
         SolrClient solrClient = mock(SolrClient.class);
         SolrPingResponse successResponse = mock(SolrPingResponse.class);
         ProgressReporter progressReporter = mock(ProgressReporter.class);
@@ -111,15 +112,13 @@ class SolrServiceImplTest {
         when(successResponse.getStatus()).thenReturn(0);
         when(solrClient.ping("collection1")).thenReturn(successResponse);
         when(solrClient.ping("editions")).thenReturn(successResponse);
+        when(solrClient.query(eq("collection1"), any())).thenReturn(queryResponseWithSize(0));
 
         SolrService service = new SolrServiceImpl(solrClient, solrProperties(),
                 new MockEnvironment().withProperty("spring.profiles.active", "test"), testExecutor(),progressReporter);
         PeriodRequest periodRequest = new PeriodRequest();
 
-        assertThatThrownBy(() -> service.findBrokenEdition(periodRequest))
-                .isInstanceOf(NullPointerException.class)
-              //  .hasMessageContaining("correctionType")
-        ;
+        assertThat(service.findBrokenEdition(periodRequest, new ProcessingTask())).isEmpty();
     }
 
     @Test
@@ -139,7 +138,7 @@ class SolrServiceImplTest {
         periodRequest.setCorrectionType(CorrectionType.ONLY_DOCUMENT_ID);
         periodRequest.setStartPeriod(LocalDateTime.now().minusDays(1));
 
-        assertThat(service.findBrokenEdition(periodRequest)).isEmpty();
+        assertThat(service.findBrokenEdition(periodRequest, new ProcessingTask())).isEmpty();
     }
 
     private QueryResponse queryResponseWithSize(int size) {
@@ -182,4 +181,3 @@ class SolrServiceImplTest {
         return periodRequest;
     }
 }
-

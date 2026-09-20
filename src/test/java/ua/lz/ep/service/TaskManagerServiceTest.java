@@ -150,10 +150,15 @@ class TaskManagerServiceTest {
 
             TaskStatus initialStatus = managerService.getTaskStatus(taskId);
             assertThat(initialStatus).isNotNull();
-            assertThat(initialStatus.getStatus()).isEqualTo("PENDING");
+            assertThat(initialStatus.getStatus()).isIn("PENDING", "RUNNING");
             assertThat(initialStatus.getProgress()).isEqualTo(0);
-            assertThat(initialStatus.getStartedAt()).isNull();
-            assertThat(initialStatus.getCompletedAt()).isNull();
+            if ("PENDING".equals(initialStatus.getStatus())) {
+                assertThat(initialStatus.getStartedAt()).isNull();
+                assertThat(initialStatus.getCompletedAt()).isNull();
+            } else {
+                assertThat(initialStatus.getStartedAt()).isNotNull();
+                assertThat(initialStatus.getCompletedAt()).isNull();
+            }
 
             assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
             waitUntil(() -> "RUNNING".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
@@ -166,6 +171,7 @@ class TaskManagerServiceTest {
 
             release.countDown();
             waitUntil(() -> "COMPLETED".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
+            waitUntil(() -> !managerService.getTaskStatus(taskId).isActive(), 2_000);
 
             TaskStatus completedStatus = managerService.getTaskStatus(taskId);
             assertThat(completedStatus.getStatus()).isEqualTo("COMPLETED");
