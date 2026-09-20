@@ -46,6 +46,7 @@ public class SolrServiceImpl implements SolrService {
     private final java.util.concurrent.atomic.AtomicInteger failuresCount = new java.util.concurrent.atomic.AtomicInteger(0);
     private final java.util.concurrent.atomic.AtomicLong totalLatencyMs = new java.util.concurrent.atomic.AtomicLong(0L);
 
+    @org.springframework.beans.factory.annotation.Autowired
     public SolrServiceImpl(
             @Qualifier("ipsuSolrClient") SolrClient solrClient,
             SolrProperties solrProperties,
@@ -64,6 +65,16 @@ public class SolrServiceImpl implements SolrService {
         logConfiguration();
         validateCollectionConnection("collection1", solrProperties.getCollection1());
         validateCollectionConnection("edition", solrProperties.getEdition());
+    }
+
+    // Backward-compatible constructor for tests/beans that don't provide CorrectionProperties
+    public SolrServiceImpl(
+            @Qualifier("ipsuSolrClient") SolrClient solrClient,
+            SolrProperties solrProperties,
+            Environment environment,
+            @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor correctionTaskExecutor,
+            ProgressReporter progressReporter) {
+        this(solrClient, solrProperties, environment, correctionTaskExecutor, new ua.lz.ep.config.CorrectionProperties(), progressReporter);
     }
 
     private void logConfiguration() {
