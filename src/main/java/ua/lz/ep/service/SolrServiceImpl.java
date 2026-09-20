@@ -33,7 +33,7 @@ import java.util.concurrent.CancellationException;
 @Service
 public class SolrServiceImpl implements SolrService {
 
-    private static final int BATCH_SIZE = 500;
+    private static final int BATCH_SIZE = 5000;
     private final SolrClient solrClient;
     private final SolrProperties solrProperties;
     private final Environment environment;
@@ -46,6 +46,9 @@ public class SolrServiceImpl implements SolrService {
     private final java.util.concurrent.atomic.AtomicInteger processedCount = new java.util.concurrent.atomic.AtomicInteger(0);
     private final java.util.concurrent.atomic.AtomicInteger failuresCount = new java.util.concurrent.atomic.AtomicInteger(0);
     private final java.util.concurrent.atomic.AtomicLong totalLatencyMs = new java.util.concurrent.atomic.AtomicLong(0L);
+
+    // Global semaphore limiting outstanding submissions across findBrokenEdition invocations
+    private volatile java.util.concurrent.Semaphore submitSemaphore = null;
 
     @org.springframework.beans.factory.annotation.Autowired
     public SolrServiceImpl(
@@ -127,6 +130,7 @@ public class SolrServiceImpl implements SolrService {
         totalDocuments = getDocumentsNumber(solrQuery);
         updateDocumentInProcessingTask(processingTask, totalDocuments);
 
+        log.info("Start processing for {} documents", totalDocuments);
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");
 
@@ -138,59 +142,47 @@ public class SolrServiceImpl implements SolrService {
             int batchSize = batchDocuments.size();
 
             // Prepare futures for parallel processing while preserving order
-            java.util.concurrent.Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
+            java.util.concurrent.ThreadPoolExecutor underlying = correctionTaskExecutor.getThreadPoolExecutor();
+            java.util.concurrent.Executor executor = underlying;
+
+            // initialize global submitSemaphore if needed
+            if (submitSemaphore == null) {
+                synchronized (this) {
+                    if (submitSemaphore == null) {
+                        int poolSize = Math.max(1, correctionTaskExecutor.getMaxPoolSize());
+                        int queueCapacity = Math.max(0, underlying.getQueue().remainingCapacity());
+                        int maxOutstanding = Math.max(1, poolSize + queueCapacity);
+                        submitSemaphore = new java.util.concurrent.Semaphore(maxOutstanding);
+                        log.info("Initialized submitSemaphore with maxOutstanding={}", maxOutstanding);
+                    }
+                }
+            }
+
             List<java.util.concurrent.CompletableFuture<java.util.List<String>>> futures = new ArrayList<>(batchSize);
 
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
                 final SolrDocument curDoc = doc;
-                java.util.concurrent.CompletableFuture<java.util.List<String>> f = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                    long start = System.nanoTime();
-                    String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
-                    boolean failed = false;
-                    List<String> resultList = null;
+                // acquire permit before submitting to avoid RejectedExecutionException
+                submitSemaphore.acquireUninterruptibly();
+
+                java.util.concurrent.CompletableFuture<java.util.List<String>> f;
+                try {
+                    f = java.util.concurrent.CompletableFuture.supplyAsync(() -> processDocumentWithRetries(curDoc, periodRequest.getCorrectionType()), executor)
+                            .whenComplete((r, t) -> {
+                                // always release permit when this submission completes
+                                submitSemaphore.release();
+                            });
+                } catch (java.util.concurrent.RejectedExecutionException ree) {
+                    // fallback: executor rejected despite permits — run processing in caller thread synchronously
                     try {
-                        // retry loop using configured retries
-                        int attempt = 0;
-                        while (true) {
-                            attempt++;
-                            try {
-                                resultList = processDocument(curDoc, periodRequest.getCorrectionType());
-                                break; // success
-                            } catch (CancellationException e) {
-                                throw e;
-                            } catch (Exception e) {
-                                log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
-                                if (attempt >= correctionProperties.getMaxRetries()) {
-                                    log.error("Exceeded retries for doc {} - marking as failed", id, e);
-                                    failed = true;
-                                    // save failed id as a failed result so it will be persisted by caller
-                                    resultList = java.util.List.of(id);
-                                    break;
-                                }
-                                try {
-                                    Thread.sleep(100L * attempt);
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    throw new CancellationException("Interrupted during retry backoff");
-                                }
-                            }
-                        }
-                        return new java.util.AbstractMap.SimpleEntry<java.util.List<String>, Boolean>(resultList, failed);
+                        java.util.List<String> syncResult = processDocumentWithRetries(curDoc, periodRequest.getCorrectionType());
+                        f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
                     } finally {
-                        long end = System.nanoTime();
-                        long latencyMs = (end - start) / 1_000_000;
-                        totalLatencyMs.addAndGet(latencyMs);
-                        processedCount.incrementAndGet();
-                        log.debug("Processed doc {} in {} ms", id, latencyMs);
+                        submitSemaphore.release();
                     }
-                }, executor).thenApply(entry -> {
-                    if (entry != null && Boolean.TRUE.equals(entry.getValue())) {
-                        failuresCount.incrementAndGet();
-                    }
-                    return entry == null ? null : entry.getKey();
-                });
+                }
 
                 futures.add(f);
             }
@@ -203,7 +195,7 @@ public class SolrServiceImpl implements SolrService {
                         notExistedEdition.addAll(editions);
                     }
                 } catch (CancellationException e) {
-                    log.warn("Processing was cancelled while waiting for a document to finish", e);
+                    log.error("Processing was cancelled while waiting for a document to finish", e);
                     Thread.currentThread().interrupt();
                     throw e;
                 } catch (Exception e) {
@@ -307,7 +299,7 @@ public class SolrServiceImpl implements SolrService {
                         long latencyMs = (end - start) / 1_000_000;
                         totalLatencyMs.addAndGet(latencyMs);
                         processedCount.incrementAndGet();
-                        log.debug("Processed doc {} in {} ms", id, latencyMs);
+                        log.trace("Processed doc {} in {} ms", id, latencyMs);
                     }
                 }, executor).thenApply(entry -> {
                     if (entry != null && Boolean.TRUE.equals(entry.getValue())) {
@@ -387,6 +379,52 @@ public class SolrServiceImpl implements SolrService {
         }
         return listOfNonExistentDocumentEditions(id, editionList);
 
+    }
+
+    /**
+     * Process a single document with retry logic and metric updates. This method is safe to call from any thread.
+     */
+    private List<String> processDocumentWithRetries(SolrDocument curDoc, CorrectionType correctionType) {
+        long start = System.nanoTime();
+        String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
+        boolean failed = false;
+        List<String> resultList = null;
+        try {
+            int attempt = 0;
+            while (true) {
+                attempt++;
+                try {
+                    resultList = processDocument(curDoc, correctionType);
+                    break;
+                } catch (CancellationException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
+                    if (attempt >= correctionProperties.getMaxRetries()) {
+                        log.error("Exceeded retries for doc {} - marking as failed", id, e);
+                        failed = true;
+                        resultList = java.util.List.of(id);
+                        break;
+                    }
+                    try {
+                        Thread.sleep(100L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new CancellationException("Interrupted during retry backoff");
+                    }
+                }
+            }
+            return resultList;
+        } finally {
+            long end = System.nanoTime();
+            long latencyMs = (end - start) / 1_000_000;
+            totalLatencyMs.addAndGet(latencyMs);
+            processedCount.incrementAndGet();
+            if (failed) {
+                failuresCount.incrementAndGet();
+            }
+            log.trace("Processed doc {} in {} ms (failed={})", id, latencyMs, failed);
+        }
     }
 
 

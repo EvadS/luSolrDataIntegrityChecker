@@ -17,6 +17,8 @@ public class ThreadPoolConfig {
         executor.setMaxPoolSize(maxThreads);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("CorrectionThread-");
+        // configure rejection policy before initializing the executor
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;
     }
