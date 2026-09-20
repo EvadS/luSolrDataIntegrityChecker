@@ -73,9 +73,7 @@ public class TaskManagerService {
 
             LocalDateTime startProcessingTime = LocalDateTime.now();
             // for test
-            /// List<String> brokenEditions = solrService.findBrokenEdition(periodRequest, processingTask);
-            List<String> brokenEditions = Arrays.asList("REG7746", "FN076991");
-
+            List<String> brokenEditions = solrService.findBrokenEdition(periodRequest, processingTask);
             int brokenCount = brokenEditions == null ? 0 : brokenEditions.size();
             processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
 
