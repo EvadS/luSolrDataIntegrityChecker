@@ -75,13 +75,14 @@ public class TaskManagerService {
             // for test
             List<String> brokenEditions = solrService.findBrokenEdition(periodRequest, processingTask);
             int brokenCount = brokenEditions == null ? 0 : brokenEditions.size();
-            processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
 
             ProcessingResult processingResul = new ProcessingResult();
             processingResul.getLostEditions().addAll(brokenEditions);
             processingResul.setProcessingStartTime(startProcessingTime);
 
             storageManager.storedReportData(processingResul);
+            processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
+
 
         }, "Correction completed successfully");
 

@@ -1,9 +1,11 @@
 package ua.lz.ep.service;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.payload.ProcessingResult;
 import ua.lz.ep.dto.request.PageRequest;
 import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
@@ -12,17 +14,23 @@ import ua.lz.ep.payload.ProcessingTask;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TaskManagerServiceTest {
 
     private final ThreadPoolTaskExecutor executor = testExecutor();
+    private final StorageManager storageManager = mock(StorageManager.class);
 
     @AfterEach
     void tearDown() {
@@ -35,13 +43,13 @@ class TaskManagerServiceTest {
         PeriodRequest periodRequest = validCorrectionRequest();
         AtomicBoolean enteredProcessing = new AtomicBoolean(false);
 
-        when(solrService.findBrokenEdition(periodRequest)).thenAnswer(invocation -> {
+        when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class))).thenAnswer(invocation -> {
             enteredProcessing.set(true);
             TimeUnit.MILLISECONDS.sleep(150);
             return List.of("edition-1", "edition-2");
         });
 
-        TaskManagerService managerService = new TaskManagerService(solrService, executor);
+        TaskManagerService managerService = new TaskManagerService(solrService, storageManager, executor);
 
         String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
 
@@ -59,6 +67,7 @@ class TaskManagerServiceTest {
         assertThat(taskStatus.isActive()).isFalse();
         assertThat(taskStatus.getStartedAt()).isNotNull();
         assertThat(taskStatus.getCompletedAt()).isNotNull();
+        verify(storageManager).storedReportData(any(ProcessingResult.class));
     }
 
     @Test
@@ -67,7 +76,7 @@ class TaskManagerServiceTest {
         PeriodRequest periodRequest = validCorrectionRequest();
         AtomicBoolean enteredProcessing = new AtomicBoolean(false);
 
-        when(solrService.findBrokenEdition(periodRequest)).thenAnswer(invocation -> {
+        when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class))).thenAnswer(invocation -> {
             enteredProcessing.set(true);
             while (true) {
                 if (Thread.currentThread().isInterrupted()) {
@@ -82,7 +91,7 @@ class TaskManagerServiceTest {
             }
         });
 
-        TaskManagerService managerService = new TaskManagerService(solrService, executor);
+        TaskManagerService managerService = new TaskManagerService(solrService, storageManager, executor);
 
         String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
         waitUntil(() -> enteredProcessing.get(), 2_000);
@@ -94,15 +103,16 @@ class TaskManagerServiceTest {
         assertThat(taskStatus.getStatus()).isEqualTo("CANCELLED");
         assertThat(taskStatus.isActive()).isFalse();
         assertThat(taskStatus.getCompletedAt()).isNotNull();
+        verify(storageManager, never()).storedReportData(any(ProcessingResult.class));
     }
 
     @Test
     void findAllShouldReturnPagedTaskStatuses() throws Exception {
         SolrService solrService = mock(SolrService.class);
         PeriodRequest periodRequest = validCorrectionRequest();
-        when(solrService.findBrokenEdition(periodRequest)).thenReturn(List.of());
+        when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class))).thenReturn(List.of());
 
-        TaskManagerService managerService = new TaskManagerService(solrService, executor);
+        TaskManagerService managerService = new TaskManagerService(solrService, storageManager, executor);
         managerService.processCorrection(new ProcessingTask(), periodRequest);
         managerService.processCorrection(new ProcessingTask(), periodRequest);
 
@@ -115,6 +125,77 @@ class TaskManagerServiceTest {
         assertThat(page.getSize()).isEqualTo(1);
         assertThat(page.getTotalElements()).isEqualTo(2);
         assertThat(page.getTotalPages()).isEqualTo(2);
+    }
+
+    @Nested
+    class ProcessCorrectionStatusesIntegrationTest {
+
+        @Test
+        void processCorrectionShouldCoverPendingRunningAndCompletedStatuses() throws Exception {
+            SolrService solrService = mock(SolrService.class);
+            PeriodRequest periodRequest = validCorrectionRequest();
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+
+            when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class)))
+                    .thenAnswer(invocation -> {
+                        started.countDown();
+                        release.await(2, TimeUnit.SECONDS);
+                        return List.of("edition-1");
+                    });
+
+            TaskManagerService managerService = new TaskManagerService(solrService, storageManager, executor);
+
+            String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
+
+            TaskStatus initialStatus = managerService.getTaskStatus(taskId);
+            assertThat(initialStatus).isNotNull();
+            assertThat(initialStatus.getStatus()).isEqualTo("PENDING");
+            assertThat(initialStatus.getProgress()).isEqualTo(0);
+            assertThat(initialStatus.getStartedAt()).isNull();
+            assertThat(initialStatus.getCompletedAt()).isNull();
+
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            waitUntil(() -> "RUNNING".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
+
+            TaskStatus runningStatus = managerService.getTaskStatus(taskId);
+            assertThat(runningStatus.getStatus()).isEqualTo("RUNNING");
+            assertThat(runningStatus.isActive()).isTrue();
+            assertThat(runningStatus.getStartedAt()).isNotNull();
+            assertThat(runningStatus.getCompletedAt()).isNull();
+
+            release.countDown();
+            waitUntil(() -> "COMPLETED".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
+
+            TaskStatus completedStatus = managerService.getTaskStatus(taskId);
+            assertThat(completedStatus.getStatus()).isEqualTo("COMPLETED");
+            assertThat(completedStatus.getProgress()).isEqualTo(100);
+            assertThat(completedStatus.isActive()).isFalse();
+            assertThat(completedStatus.getCompletedAt()).isNotNull();
+        }
+
+        @Test
+        void processCorrectionShouldMarkTaskAsFailedWhenProcessingThrows() throws Exception {
+            SolrService solrService = mock(SolrService.class);
+            PeriodRequest periodRequest = validCorrectionRequest();
+
+            when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class)))
+                    .thenThrow(new IllegalStateException("Solr is unavailable"));
+
+            TaskManagerService managerService = new TaskManagerService(solrService, storageManager, executor);
+
+            String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
+
+            waitUntil(() -> "FAILED".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
+
+            TaskStatus failedStatus = managerService.getTaskStatus(taskId);
+            assertThat(failedStatus.getStatus()).isEqualTo("FAILED");
+            assertThat(failedStatus.getMessage()).contains("Solr is unavailable");
+            assertThat(failedStatus.isActive()).isFalse();
+            assertThat(failedStatus.getStartedAt()).isNotNull();
+            assertThat(failedStatus.getCompletedAt()).isNotNull();
+            verify(storageManager, never()).storedReportData(any(ProcessingResult.class));
+        }
     }
 
     private void waitUntil(BooleanSupplier condition, long timeoutMs) throws Exception {
@@ -153,4 +234,3 @@ class TaskManagerServiceTest {
         return periodRequest;
     }
 }
-
