@@ -25,6 +25,7 @@ import ua.lz.ep.utils.SolrUtils;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 
@@ -126,9 +127,6 @@ public class SolrServiceImpl implements SolrService {
         totalDocuments = getDocumentsNumber(solrQuery);
         updateDocumentInProcessingTask(processingTask, totalDocuments);
 
-        // bounds for parallelism are taken from configured executor and correction properties
-        // maxThreads is configured on the ThreadPool bean; retries come from correctionProperties
-
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");
 
@@ -151,7 +149,7 @@ public class SolrServiceImpl implements SolrService {
                     long start = System.nanoTime();
                     String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
                     boolean failed = false;
-                    java.util.List<String> resultList = null;
+                    List<String> resultList = null;
                     try {
                         // retry loop using configured retries
                         int attempt = 0;
@@ -264,6 +262,12 @@ public class SolrServiceImpl implements SolrService {
         }
         return listOfNonExistentDocumentEditions(id, editionList);
 
+    }
+
+
+    private List<String> processEditionIds(SolrDocument doc, CorrectionType correctionType){
+        // todo: not implement
+        return Collections.emptyList();
     }
 
 

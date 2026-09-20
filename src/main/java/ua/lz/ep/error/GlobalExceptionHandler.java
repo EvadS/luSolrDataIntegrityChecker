@@ -1,4 +1,4 @@
-package ua.lz.ep.controller;
+package ua.lz.ep.error;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
