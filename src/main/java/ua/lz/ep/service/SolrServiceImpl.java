@@ -37,19 +37,28 @@ public class SolrServiceImpl implements SolrService {
     private final SolrProperties solrProperties;
     private final Environment environment;
     private final ThreadPoolTaskExecutor correctionTaskExecutor;
+    private final ua.lz.ep.config.CorrectionProperties correctionProperties;
 
     private final ProgressReporter progressReporter;
+
+    // simple metrics exposed for tests: processed count, failures and total latency
+    private final java.util.concurrent.atomic.AtomicInteger processedCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    private final java.util.concurrent.atomic.AtomicInteger failuresCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    private final java.util.concurrent.atomic.AtomicLong totalLatencyMs = new java.util.concurrent.atomic.AtomicLong(0L);
 
     public SolrServiceImpl(
             @Qualifier("ipsuSolrClient") SolrClient solrClient,
             SolrProperties solrProperties,
             Environment environment,
-            @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor correctionTaskExecutor, ProgressReporter progressReporter) {
+            @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor correctionTaskExecutor,
+            ua.lz.ep.config.CorrectionProperties correctionProperties,
+            ProgressReporter progressReporter) {
 
         this.solrClient = solrClient;
         this.solrProperties = solrProperties;
         this.environment = environment;
         this.correctionTaskExecutor = correctionTaskExecutor;
+        this.correctionProperties = correctionProperties;
         this.progressReporter = progressReporter;
 
         logConfiguration();
@@ -106,6 +115,9 @@ public class SolrServiceImpl implements SolrService {
         totalDocuments = getDocumentsNumber(solrQuery);
         updateDocumentInProcessingTask(processingTask, totalDocuments);
 
+        // bounds for parallelism are taken from configured executor and correction properties
+        // maxThreads is configured on the ThreadPool bean; retries come from correctionProperties
+
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");
 
@@ -114,14 +126,80 @@ public class SolrServiceImpl implements SolrService {
                 break;
             }
 
-            List<String> editions = new ArrayList<>();
+            int batchSize = batchDocuments.size();
+
+            // Prepare futures for parallel processing while preserving order
+            java.util.concurrent.Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
+            List<java.util.concurrent.CompletableFuture<java.util.List<String>>> futures = new ArrayList<>(batchSize);
+
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
-                log.trace("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
-                editions = processDocument(doc, periodRequest.getCorrectionType());
-                if (!editions.isEmpty()) {
-                    notExistedEdition.addAll(editions);
+                final SolrDocument curDoc = doc;
+                java.util.concurrent.CompletableFuture<java.util.List<String>> f = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    long start = System.nanoTime();
+                    String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
+                    boolean failed = false;
+                    java.util.List<String> resultList = null;
+                    try {
+                        // retry loop using configured retries
+                        int attempt = 0;
+                        while (true) {
+                            attempt++;
+                            try {
+                                resultList = processDocument(curDoc, periodRequest.getCorrectionType());
+                                break; // success
+                            } catch (CancellationException e) {
+                                throw e;
+                            } catch (Exception e) {
+                                log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
+                                if (attempt >= correctionProperties.getMaxRetries()) {
+                                    log.error("Exceeded retries for doc {} - marking as failed", id, e);
+                                    failed = true;
+                                    // save failed id as a failed result so it will be persisted by caller
+                                    resultList = java.util.List.of(id);
+                                    break;
+                                }
+                                try {
+                                    Thread.sleep(100L * attempt);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    throw new CancellationException("Interrupted during retry backoff");
+                                }
+                            }
+                        }
+                        return new java.util.AbstractMap.SimpleEntry<java.util.List<String>, Boolean>(resultList, failed);
+                    } finally {
+                        long end = System.nanoTime();
+                        long latencyMs = (end - start) / 1_000_000;
+                        totalLatencyMs.addAndGet(latencyMs);
+                        processedCount.incrementAndGet();
+                        log.debug("Processed doc {} in {} ms", id, latencyMs);
+                    }
+                }, executor).thenApply(entry -> {
+                    if (entry != null && Boolean.TRUE.equals(entry.getValue())) {
+                        failuresCount.incrementAndGet();
+                    }
+                    return entry == null ? null : entry.getKey();
+                });
+
+                futures.add(f);
+            }
+
+            // Wait for completion and preserve order by iterating futures in same order
+            for (java.util.concurrent.CompletableFuture<java.util.List<String>> future : futures) {
+                try {
+                    java.util.List<String> editions = future.join();
+                    if (editions != null && !editions.isEmpty()) {
+                        notExistedEdition.addAll(editions);
+                    }
+                } catch (CancellationException e) {
+                    log.warn("Processing was cancelled while waiting for a document to finish", e);
+                    Thread.currentThread().interrupt();
+                    throw e;
+                } catch (Exception e) {
+                    log.error("Unexpected error while processing document batch", e);
+                    // best-effort: continue with next
                 }
             }
 
@@ -292,5 +370,19 @@ public class SolrServiceImpl implements SolrService {
         if (Thread.currentThread().isInterrupted()) {
             throw new CancellationException(message);
         }
+    }
+
+    // Metrics accessors (used by tests)
+    public int getProcessedCount() {
+        return processedCount.get();
+    }
+
+    public int getFailuresCount() {
+        return failuresCount.get();
+    }
+
+    public double getAverageLatencyMs() {
+        int count = processedCount.get();
+        return count == 0 ? 0.0 : (double) totalLatencyMs.get() / count;
     }
 }
