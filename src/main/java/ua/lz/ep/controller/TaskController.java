@@ -12,22 +12,23 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import ua.lz.ep.dto.response.ApiErrorResponse;
-import ua.lz.ep.service.TaskManagerService;
+import ua.lz.ep.service.MissingEditionManagerService;
 
 @RestController
-@RequestMapping("/api/tasks")
+@RequestMapping("/api/corrections")
 @Tag(name = "Technical tasks", description = "Auxiliary endpoints for manually starting and stopping demo background tasks")
 @Hidden
 public class TaskController {
 
-    private final TaskManagerService taskService;
+    private final MissingEditionManagerService taskService;
 
-    public TaskController(TaskManagerService taskService) {
+    public TaskController(MissingEditionManagerService taskService) {
         this.taskService = taskService;
     }
 
+
     // Endpoint to start a custom task with a specific ID
-    @PostMapping("/start/{taskId}")
+    @PostMapping("/missing-editions/{taskId}")
     @Operation(summary = "Start demo task", description = "Starts a sample background task with a custom identifier.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task started successfully",
@@ -41,7 +42,7 @@ public class TaskController {
     }
 
     // Endpoint to manually stop/cancel a running task by ID
-    @PostMapping("/stop/{taskId}")
+    @PostMapping("/missing-editions/stop/{taskId}")
     @Operation(summary = "Stop demo task", description = "Stops a sample background task by its identifier.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task stopped successfully",

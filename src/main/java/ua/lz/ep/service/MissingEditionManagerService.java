@@ -19,7 +19,7 @@ import java.util.concurrent.Future;
 
 @Log4j2
 @Service
-public class TaskManagerService {
+public class MissingEditionManagerService {
 
     private final SolrService solrService;
     private final StorageManager  storageManager;
@@ -28,7 +28,7 @@ public class TaskManagerService {
     private final Map<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
     private final Map<String, ProcessingTask> taskRegistry = new ConcurrentHashMap<>();
 
-    public TaskManagerService(
+    public MissingEditionManagerService(
             SolrService solrService,
             StorageManager  storageManager,
             @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor taskExecutor) {
@@ -82,8 +82,6 @@ public class TaskManagerService {
 
             storageManager.storedReportData(processingResul);
             processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
-
-
         }, "Correction completed successfully");
 
         return taskId;

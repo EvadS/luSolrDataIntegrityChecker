@@ -239,6 +239,131 @@ public class SolrServiceImpl implements SolrService {
         return notExistedEdition;
     }
 
+
+    @Override
+    public List<String> searchEditionIdMismatches(PeriodRequest periodRequest, ProcessingTask processingTask) {
+        List<String> notExistedEdition = new ArrayList<>();
+        int currentPositions = 0;
+        int totalDocuments;
+        int currentItem = 0;
+
+        SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
+        totalDocuments = getDocumentsNumber(solrQuery);
+        updateDocumentInProcessingTask(processingTask, totalDocuments);
+
+        while (true) {
+            throwIfInterrupted("Correction processing was cancelled before reading the next batch");
+
+            SolrDocumentList batchDocuments = executeBatchQuery(solrQuery, currentPositions);
+            if (batchDocuments == null || batchDocuments.isEmpty()) {
+                break;
+            }
+
+            int batchSize = batchDocuments.size();
+
+            // Prepare futures for parallel processing while preserving order
+            java.util.concurrent.Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
+            List<java.util.concurrent.CompletableFuture<java.util.List<String>>> futures = new ArrayList<>(batchSize);
+
+            for (SolrDocument doc : batchDocuments) {
+                throwIfInterrupted("Correction processing was cancelled while iterating documents");
+
+                final SolrDocument curDoc = doc;
+                java.util.concurrent.CompletableFuture<java.util.List<String>> f = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    long start = System.nanoTime();
+                    String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
+                    boolean failed = false;
+                    List<String> resultList = null;
+                    try {
+                        // retry loop using configured retries
+                        int attempt = 0;
+                        while (true) {
+                            attempt++;
+                            try {
+                                resultList = processEditionIds(curDoc, periodRequest.getCorrectionType());
+                                break; // success
+                            } catch (CancellationException e) {
+                                throw e;
+                            } catch (Exception e) {
+                                log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
+                                if (attempt >= correctionProperties.getMaxRetries()) {
+                                    log.error("Exceeded retries for doc {} - marking as failed", id, e);
+                                    failed = true;
+                                    // save failed id as a failed result so it will be persisted by caller
+                                    resultList = java.util.List.of(id);
+                                    break;
+                                }
+                                try {
+                                    Thread.sleep(100L * attempt);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    throw new CancellationException("Interrupted during retry backoff");
+                                }
+                            }
+                        }
+                        return new java.util.AbstractMap.SimpleEntry<java.util.List<String>, Boolean>(resultList, failed);
+                    } finally {
+                        long end = System.nanoTime();
+                        long latencyMs = (end - start) / 1_000_000;
+                        totalLatencyMs.addAndGet(latencyMs);
+                        processedCount.incrementAndGet();
+                        log.debug("Processed doc {} in {} ms", id, latencyMs);
+                    }
+                }, executor).thenApply(entry -> {
+                    if (entry != null && Boolean.TRUE.equals(entry.getValue())) {
+                        failuresCount.incrementAndGet();
+                    }
+                    return entry == null ? null : entry.getKey();
+                });
+
+                futures.add(f);
+            }
+
+            // Wait for completion and preserve order by iterating futures in same order
+            for (java.util.concurrent.CompletableFuture<java.util.List<String>> future : futures) {
+                try {
+                    java.util.List<String> editions = future.join();
+                    if (editions != null && !editions.isEmpty()) {
+                        notExistedEdition.addAll(editions);
+                    }
+                } catch (CancellationException e) {
+                    log.warn("Processing was cancelled while waiting for a document to finish", e);
+                    Thread.currentThread().interrupt();
+                    throw e;
+                } catch (Exception e) {
+                    log.error("Unexpected error while processing document batch", e);
+                    // best-effort: continue with next
+                }
+            }
+
+            currentItem += batchDocuments.size();
+            if (processingTask != null && totalDocuments > 0) {
+                int percent = (int) Math.min(100, Math.round((currentItem * 100.0) / totalDocuments));
+                processingTask.updateProgress(percent, "Processed " + currentItem + " of " + totalDocuments + " documents");
+            }
+
+            if (batchDocuments.size() < BATCH_SIZE) {
+                break;
+            }
+
+            currentPositions += BATCH_SIZE;
+            progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
+
+            updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
+        }
+
+        if (processingTask != null) {
+            if (totalDocuments == 0) {
+                processingTask.updateProgress(100, "No documents matched the request");
+            } else {
+                processingTask.updateProgress(100, "Finished processing documents");
+            }
+        }
+
+        return notExistedEdition;
+    }
+
+
     private void updateProcessedDocumentInProcessingTask(ProcessingTask processingTask, int currentPositions) {
         if (processingTask != null) {
             processingTask.setDocumentsProcessed(currentPositions);

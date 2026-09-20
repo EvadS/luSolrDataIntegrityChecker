@@ -11,5 +11,7 @@ public interface SolrService {
     List<String> findBrokenEdition(PeriodRequest periodRequest);
 
     List<String> findBrokenEdition(PeriodRequest periodRequest, ProcessingTask processingTask);
+
+    public List<String> searchEditionIdMismatches(PeriodRequest periodRequest, ProcessingTask processingTask);
 }
 

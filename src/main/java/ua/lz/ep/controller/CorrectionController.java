@@ -27,32 +27,33 @@ import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
 import ua.lz.ep.dto.response.TaskSubmissionResponse;
 import ua.lz.ep.payload.ProcessingTask;
-import ua.lz.ep.service.TaskManagerService;
+import ua.lz.ep.service.MissingEditionManagerService;
 
 
 @RestController
-@RequestMapping("/api/correction/tasks")
-@Tag(name = "Correction tasks",
-        description = "Operations for starting, tracking, listing and stopping asynchronous Solr correction tasks")
+@RequestMapping("/api/corrections")
+@Tag(name = "Corrections",
+        description = "Operations for starting, tracking, listing and stopping correction tasks (missing editions, edition counts)")
 @Validated
 public class CorrectionController {
 
-    private final TaskManagerService managerService;
+    private final MissingEditionManagerService managerService;
 
-    public CorrectionController(TaskManagerService managerService) {
+    public CorrectionController(MissingEditionManagerService managerService) {
         this.managerService = managerService;
     }
 
-    @PostMapping
+    @PostMapping(path = {"/missing-editions"})
     @ResponseStatus(HttpStatus.ACCEPTED)
-    @Operation(summary = "Create correction task", description = "Creates an asynchronous correction task and immediately returns its identifier and resource links.")
+    @Operation(summary = "Start missing editions check",
+            description = "Starts an asynchronous task that detects missing editions according to the provided filter (period or explicit documentIds). Returns task identifier and links to status/report.")
     @ApiResponses({
             @ApiResponse(responseCode = "202", description = "Task accepted for asynchronous processing",
                     content = @Content(schema = @Schema(implementation = TaskSubmissionResponse.class))),
             @ApiResponse(ref = OpenApiConstants.BAD_REQUEST_RESPONSE_REF),
             @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
     })
-    public ResponseEntity<TaskSubmissionResponse> createTask(
+    public ResponseEntity<TaskSubmissionResponse> createMissingEditionsTask(
             @RequestBody(description = "Correction request with optional documentIds filter and optional period boundaries.", required = true,
                     content = @Content(schema = @Schema(implementation = PeriodRequest.class), examples = {
                             @ExampleObject(name = "By period", value = """
@@ -74,7 +75,7 @@ public class CorrectionController {
             HttpServletRequest request) {
         ProcessingTask processingTask = new ProcessingTask();
         String id = managerService.processCorrection(processingTask, periodRequest);
-        String statusUrl = request.getContextPath() + "/api/correction/tasks/" + id;
+        String statusUrl = request.getContextPath() + "/api/corrections/tasks/" + id;
         TaskSubmissionResponse response = new TaskSubmissionResponse(id, "PENDING", statusUrl, statusUrl);
 
         return ResponseEntity.accepted()
@@ -82,7 +83,7 @@ public class CorrectionController {
                 .body(response);
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/missing-edition/tasks/{id}")
     @Operation(summary = "Get task status", description = "Returns the current state and progress of an asynchronous correction task.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task status found",
@@ -102,7 +103,7 @@ public class CorrectionController {
         return ResponseEntity.ok(taskStatus);
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/missing-edition/tasks/{id}")
     @Operation(summary = "Cancel task", description = "Requests cancellation of an asynchronous correction task and returns the updated status.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task cancellation requested",
@@ -124,7 +125,7 @@ public class CorrectionController {
         return ResponseEntity.ok(managerService.getTaskStatus(taskId));
     }
 
-    @GetMapping
+    @GetMapping("/missing-edition/tasks")
     @Operation(summary = "List tasks", description = "Returns a paged list of known correction tasks stored in memory.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task list returned",
