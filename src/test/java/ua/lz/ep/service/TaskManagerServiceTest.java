@@ -49,7 +49,7 @@ class TaskManagerServiceTest {
         assertThat(managerService.getTaskStatus(taskId)).isNotNull();
         assertThat(managerService.getTaskStatus(taskId).getStatus()).isIn("PENDING", "RUNNING");
 
-        waitUntil(() -> enteredProcessing.get(), 2_000);
+        waitUntil(enteredProcessing::get, 2_000);
         waitUntil(() -> "COMPLETED".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
 
         TaskStatus taskStatus = managerService.getTaskStatus(taskId);

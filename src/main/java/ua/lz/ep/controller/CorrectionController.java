@@ -32,7 +32,8 @@ import ua.lz.ep.service.TaskManagerService;
 
 @RestController
 @RequestMapping("/api/correction/tasks")
-@Tag(name = "Correction tasks", description = "Operations for starting, tracking, listing and stopping asynchronous Solr correction tasks")
+@Tag(name = "Correction tasks",
+        description = "Operations for starting, tracking, listing and stopping asynchronous Solr correction tasks")
 @Validated
 public class CorrectionController {
 

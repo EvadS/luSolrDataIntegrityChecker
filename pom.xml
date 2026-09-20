@@ -9,9 +9,9 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>ua.lz.ep</groupId>
-    <artifactId>luSolrCorrectionService</artifactId>
+    <artifactId>luSolrDataIntegrityChecker</artifactId>
     <version>0.0.1</version>
-    <name>luSolrCorrectionService</name>
+    <name>luSolrDataIntegrityChecker</name>
     <description>REST API for launching tasks to retrieve data from Solr, tracking execution status, and managing the task lifecycle.</description>
     <url/>
     <licenses>

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import ua.lz.ep.component.ProgressReporter;
 import ua.lz.ep.config.SolrProperties;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.payload.ProcessingTask;
 import ua.lz.ep.payload.enums.CorrectionType;
 import ua.lz.ep.utils.EditionUtils;
 import ua.lz.ep.utils.MappingFieldsHelper;
@@ -31,13 +32,14 @@ import java.util.concurrent.CancellationException;
 @Service
 public class SolrServiceImpl implements SolrService {
 
-    private static final int BATCH_SIZE = 5000;
+    private static final int BATCH_SIZE = 500;
     private final SolrClient solrClient;
     private final SolrProperties solrProperties;
     private final Environment environment;
     private final ThreadPoolTaskExecutor correctionTaskExecutor;
 
     private final ProgressReporter progressReporter;
+
     public SolrServiceImpl(
             @Qualifier("ipsuSolrClient") SolrClient solrClient,
             SolrProperties solrProperties,
@@ -90,44 +92,76 @@ public class SolrServiceImpl implements SolrService {
 
     @Override
     public List<String> findBrokenEdition(PeriodRequest periodRequest) {
-        List<String> notExistedEdition = new ArrayList<>();
-        int start = 0;
-        int batchNumber = 1;
+        return findBrokenEdition(periodRequest, null);
+    }
 
-       SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
+    @Override
+    public List<String> findBrokenEdition(PeriodRequest periodRequest, ProcessingTask processingTask) {
+        List<String> notExistedEdition = new ArrayList<>();
+        int currentPositions = 0;
+        int totalDocuments = 0;
         int currentItem = 0;
+
+        SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
+        totalDocuments = getDocumentsNumber(solrQuery);
+        processingTask.setDocumentsNumber(totalDocuments);
+
         while (true) {
             throwIfInterrupted("Correction processing was cancelled before reading the next batch");
 
-            //документы для обработки
-            SolrDocumentList documents = executeBatchQuery(solrQuery, start);
-            if (documents == null || documents.isEmpty()) {
+            SolrDocumentList batchDocuments = executeBatchQuery(solrQuery, currentPositions);
+            if (batchDocuments == null || batchDocuments.isEmpty()) {
                 break;
             }
+
             List<String> editions = new ArrayList<>();
-            for (SolrDocument doc : documents) {
+            for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
-                log.trace("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
+                log.debug("Submitting task for document: {}", doc.get(SolrConstants.FIELD_ID));
                 editions = processDocument(doc, periodRequest.getCorrectionType());
                 if (!editions.isEmpty()) {
                     notExistedEdition.addAll(editions);
                 }
             }
 
-            if (documents.size() < BATCH_SIZE) {
+            currentItem += batchDocuments.size();
+            if (processingTask != null && totalDocuments > 0) {
+                int percent = (int) Math.min(100, Math.round((currentItem * 100.0) / totalDocuments));
+                processingTask.updateProgress(percent, "Processed " + currentItem + " of " + totalDocuments + " documents");
+            }
+
+            if (batchDocuments.size() < BATCH_SIZE) {
                 break;
             }
 
-            start += BATCH_SIZE;
-            currentItem+=BATCH_SIZE;
-            batchNumber++;
+            currentPositions += BATCH_SIZE;
+            progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
 
-            // вместо непосредственного логирования — вызываем метод-отчёт
-            progressReporter.reportProgress(currentItem, editions.size(), documents.size());
+            updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
+        }
+
+        if (processingTask != null) {
+            if (totalDocuments == 0) {
+                processingTask.updateProgress(100, "No documents matched the request");
+            } else {
+                processingTask.updateProgress(100, "Finished processing documents");
+            }
         }
 
         return notExistedEdition;
+    }
+
+    private void updateProcessedDocumentInProcessingTask(ProcessingTask processingTask, int currentPositions) {
+        if (processingTask != null) {
+            processingTask.setDocumentsProcessed(currentPositions);
+        }
+    }
+
+    private void updateDocumentInProcessingTask(ProcessingTask processingTask, int documentsNumber) {
+        if (processingTask != null) {
+            processingTask.setDocumentsNumber(documentsNumber);
+        }
     }
 
     private List<String> processDocument(SolrDocument doc, CorrectionType correctionType) {
@@ -143,17 +177,16 @@ public class SolrServiceImpl implements SolrService {
 
     }
 
-    // todo: documents with lost editions
+
     private List<String> listOfNonExistentDocumentIds(String id, List<String> editionList) {
         List<String> notExistedEdition = new ArrayList<>();
 
-        log.trace("list of editions size: {},  [{}]", id, String.join(",", editionList));
+        log.debug("id:{} , editions: {}", id, String.join(",", editionList));
         List<String> editionIds = EditionUtils.buildEditionIds(id, editionList);
 
         for (String editionId : editionIds) {
             throwIfInterrupted("Correction processing was cancelled while checking document ids");
 
-            log.trace("check editions: {}", editionId);
             SolrQuery query = new SolrQuery();
             query.setQuery(String.format("%s:\"%s\"", SolrConstants.FIELD_ID, editionId));
             query.setRows(0); // Нам не нужны документы, только количество
@@ -173,6 +206,27 @@ public class SolrServiceImpl implements SolrService {
             }
         }
         return notExistedEdition;
+    }
+
+    private void validateCorrectionRequest(PeriodRequest periodRequest) {
+        if (periodRequest == null
+                || periodRequest.getCorrectionType() == null) {
+            throw new IllegalArgumentException("PeriodRequest must contain correctionType");
+        }
+
+        boolean hasDocumentIds = periodRequest.getDocumentIds() != null
+                && periodRequest.getDocumentIds().stream().anyMatch(id -> id != null && !id.isBlank());
+        boolean hasPeriodFilter = periodRequest.getStartPeriod() != null || periodRequest.getEndPeriod() != null;
+
+        if (!hasDocumentIds && !hasPeriodFilter) {
+            throw new IllegalArgumentException("PeriodRequest must contain documentIds or period boundaries");
+        }
+
+        if (periodRequest.getStartPeriod() != null
+                && periodRequest.getEndPeriod() != null
+                && periodRequest.getStartPeriod().isAfter(periodRequest.getEndPeriod())) {
+            throw new IllegalArgumentException("startPeriod must be earlier than or equal to endPeriod");
+        }
     }
 
     private List<String> listOfNonExistentDocumentEditions(String id, List<String> editionList) {
@@ -204,6 +258,22 @@ public class SolrServiceImpl implements SolrService {
         return notExistedEdition;
     }
 
+    private int getDocumentsNumber(SolrQuery countQuery) {
+        if (countQuery == null) {
+            throw new IllegalArgumentException("SolrQuery must not be null");
+        }
+        countQuery.setRows(0);
+
+        try {
+            QueryResponse response = solrClient.query(solrProperties.getCollection1(), countQuery);
+            if (response == null || response.getResults() == null) {
+                return 0;
+            }
+            return (int) Math.min(response.getResults().getNumFound(), Integer.MAX_VALUE);
+        } catch (SolrServerException | IOException e) {
+            throw new IllegalStateException("Failed to count documents for Solr query: '" + countQuery + "'", e);
+        }
+    }
 
     private SolrDocumentList executeBatchQuery(SolrQuery query, int start) {
         throwIfInterrupted("Correction processing was cancelled before Solr batch query");

@@ -20,6 +20,13 @@ public class ProcessingTask {
     @Schema(description = "Task progress in percent", example = "0")
     private volatile Integer progress = 0;
 
+    // todo: всего документов
+    @Schema(description = "Documents number", example = "0")
+    private volatile Integer documentsNumber = 0;
+
+    @Schema(description = "Number of documents processed", example = "0")
+    private volatile Integer documentsProcessed = 0;
+
     @Schema(description = "Current task message", example = "Task created")
     private volatile String message = "Task created";
 
@@ -61,6 +68,10 @@ public class ProcessingTask {
             this.startedAt = LocalDateTime.now();
         }
         updateMessage(taskMessage);
+    }
+
+    public synchronized void updateProgress(int value) {
+        updateProgress(value, null);
     }
 
     public synchronized void updateProgress(int value, String taskMessage) {
@@ -105,6 +116,14 @@ public class ProcessingTask {
 
     public synchronized boolean isTerminal() {
         return status.isTerminal();
+    }
+
+    public synchronized void setDocumentsNumber(int documentsNumber) {
+        this.documentsNumber = documentsNumber;
+    }
+
+    public synchronized void setDocumentsProcessed(int documentsProcessed) {
+        this.documentsProcessed = documentsProcessed;
     }
 
     private void updateMessage(String taskMessage) {

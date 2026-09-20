@@ -5,15 +5,14 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.payload.ProcessingResult;
 import ua.lz.ep.dto.request.PageRequest;
 import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
 import ua.lz.ep.payload.ProcessingTask;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
@@ -23,15 +22,19 @@ import java.util.concurrent.Future;
 public class TaskManagerService {
 
     private final SolrService solrService;
+    private final StorageManager  storageManager;
+
     private final ThreadPoolTaskExecutor taskExecutor;
     private final Map<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
     private final Map<String, ProcessingTask> taskRegistry = new ConcurrentHashMap<>();
 
     public TaskManagerService(
             SolrService solrService,
+            StorageManager  storageManager,
             @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor taskExecutor) {
         this.solrService = solrService;
         this.taskExecutor = taskExecutor;
+        this.storageManager = storageManager;
     }
 
     public String startTask(String taskId, Runnable taskLogic) {
@@ -67,9 +70,21 @@ public class TaskManagerService {
         log.debug("Creating processing task {} for correction request: {}", taskId, periodRequest);
 
         submitTask(processingTask, () -> {
-            List<String> brokenEditions = solrService.findBrokenEdition(periodRequest);
+
+            LocalDateTime startProcessingTime = LocalDateTime.now();
+            // for test
+            /// List<String> brokenEditions = solrService.findBrokenEdition(periodRequest, processingTask);
+            List<String> brokenEditions = Arrays.asList("REG7746", "FN076991");
+
             int brokenCount = brokenEditions == null ? 0 : brokenEditions.size();
             processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
+
+            ProcessingResult processingResul = new ProcessingResult();
+            processingResul.getLostEditions().addAll(brokenEditions);
+            processingResul.setProcessingStartTime(startProcessingTime);
+
+            storageManager.storedReportData(processingResul);
+
         }, "Correction completed successfully");
 
         return taskId;
@@ -173,6 +188,8 @@ public class TaskManagerService {
                 task.getId(),
                 task.getStatus().name(),
                 task.getProgress(),
+                task.getDocumentsNumber(),
+                task.getDocumentsProcessed(),
                 task.getMessage(),
                 task.getCreatedAt(),
                 task.getStartedAt(),

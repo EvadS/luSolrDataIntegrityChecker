@@ -21,6 +21,12 @@ public class TaskStatus {
     @Schema(description = "Execution progress in percent", example = "45", minimum = "0", maximum = "100", requiredMode = Schema.RequiredMode.REQUIRED)
     private Integer progress;
 
+    @Schema(description = "Documents number", example = "1650", requiredMode = Schema.RequiredMode.REQUIRED)
+    private int documentsNumber;
+
+    @Schema(description = "Number of documents processed", example = "850", requiredMode = Schema.RequiredMode.REQUIRED)
+    private int documentsProcessed;
+
     @Schema(description = "Additional execution details or error message", example = "Task is running", requiredMode = Schema.RequiredMode.REQUIRED)
     private String message;
 

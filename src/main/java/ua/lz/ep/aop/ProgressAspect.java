@@ -7,9 +7,8 @@ import org.aspectj.lang.annotation.Before;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
 import org.springframework.stereotype.Component;
+import ua.lz.ep.utils.MathUtil;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Arrays;
 
 @Aspect
@@ -23,11 +22,7 @@ public class ProgressAspect {
      */
     @Before("@annotation(com.se.sample.aop.ReportProgress) && args(processed, total, pageSize)")
     public void beforeReportProgress(int processed, long total, int pageSize) {
-        double progress = 0.0;
-        if (total > 0) {
-            BigDecimal bd = BigDecimal.valueOf(((double) processed / total) * 100);
-            progress = Math.min(bd.setScale(2, RoundingMode.HALF_UP).doubleValue(), 100.0);
-        }
+        double progress =  MathUtil.calculateProgress(processed, total);
         logger.info("Processed:{} documents, count:{}, progress: {}%", pageSize, total, progress);
     }
 
