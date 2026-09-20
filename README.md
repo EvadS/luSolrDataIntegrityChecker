@@ -30,8 +30,7 @@ mvn --% clean verify sonar:sonar -Dsonar.projectKey=luSolrDataIntegrityChecker -
 ```
 
 ```bash
-mvn clean verify sonar:sonar -Dsonar.projectKey="luSolrDataIntegrityChecker" -Dsonar.host.url="http://localhost:9000"
- -Dsonar.login="sqp_e6a2ecdaca4b11f2ccfc5f504980788baa125ac3"
+mvn clean verify sonar:sonar -Dsonar.projectKey="luSolrDataIntegrityChecker" -Dsonar.host.url="http://localhost:9000"  -Dsonar.login="sqp_e6a2ecdaca4b11f2ccfc5f504980788baa125ac3"
 ```
 
 Project coverage is published from the JaCoCo XML report generated at:

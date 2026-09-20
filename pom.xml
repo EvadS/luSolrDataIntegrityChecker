@@ -38,6 +38,9 @@
         <sonar.projectName>luSolrDataIntegrityChecker</sonar.projectName>
         <sonar.host.url>http://localhost:9000</sonar.host.url>
         <sonar.coverage.jacoco.xmlReportPaths>${project.basedir}/target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <sonar.sources>src/main</sonar.sources>
+        <sonar.tests>src/test</sonar.tests>
+        <sonar.exclusions>/src/test/,/Test.java</sonar.exclusions>
     </properties>
     <dependencies>
         <dependency>
