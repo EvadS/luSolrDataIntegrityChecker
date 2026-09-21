@@ -51,7 +51,7 @@ class MissingEditionManagerServiceTest {
 
         MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
 
-        String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
+        String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
         assertThat(taskId).isNotBlank();
         assertThat(managerService.getTaskStatus(taskId)).isNotNull();
@@ -113,8 +113,8 @@ class MissingEditionManagerServiceTest {
         when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class))).thenReturn(List.of());
 
         MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
-        managerService.processCorrection(new ProcessingTask(), periodRequest);
-        managerService.processCorrection(new ProcessingTask(), periodRequest);
+        managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
+        managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
         waitUntil(() -> managerService.findAll(pageRequest(0, 10)).getTotalElements() == 2, 2_000);
 
@@ -146,7 +146,7 @@ class MissingEditionManagerServiceTest {
 
             MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
 
-            String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
+            String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
             TaskStatus initialStatus = managerService.getTaskStatus(taskId);
             assertThat(initialStatus).isNotNull();
@@ -190,7 +190,7 @@ class MissingEditionManagerServiceTest {
 
             MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
 
-            String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
+            String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
             waitUntil(() -> "FAILED".equals(managerService.getTaskStatus(taskId).getStatus()), 2_000);
 

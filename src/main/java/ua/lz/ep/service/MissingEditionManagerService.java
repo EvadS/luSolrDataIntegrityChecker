@@ -62,7 +62,11 @@ public class MissingEditionManagerService {
         return false;
     }
 
-    public String processCorrection(ProcessingTask processingTask, PeriodRequest periodRequest) {
+    /**
+     * Submit a missing-editions correction task for asynchronous execution.
+     * Returns a task identifier immediately.
+     */
+    public String submitMissingEditionsTask(ProcessingTask processingTask, PeriodRequest periodRequest) {
         String taskId = resolveTaskId(processingTask);
         processingTask.initialize(taskId, "Correction task queued for execution");
         taskRegistry.put(taskId, processingTask);
@@ -85,6 +89,11 @@ public class MissingEditionManagerService {
         }, "Correction completed successfully");
 
         return taskId;
+    }
+
+    @Deprecated
+    public String processCorrection(ProcessingTask processingTask, PeriodRequest periodRequest) {
+        return submitMissingEditionsTask(processingTask, periodRequest);
     }
 
     public TaskStatus getTaskStatus(String taskId) {

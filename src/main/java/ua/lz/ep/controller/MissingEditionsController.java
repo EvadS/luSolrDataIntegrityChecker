@@ -35,11 +35,11 @@ import ua.lz.ep.service.MissingEditionManagerService;
 @Tag(name = "Corrections",
         description = "Operations for starting, tracking, listing and stopping correction tasks (missing editions, edition counts)")
 @Validated
-public class CorrectionController {
+public class MissingEditionsController {
 
     private final MissingEditionManagerService managerService;
 
-    public CorrectionController(MissingEditionManagerService managerService) {
+    public MissingEditionsController(MissingEditionManagerService managerService) {
         this.managerService = managerService;
     }
 
@@ -74,8 +74,8 @@ public class CorrectionController {
             @Valid @org.springframework.web.bind.annotation.RequestBody PeriodRequest periodRequest,
             HttpServletRequest request) {
         ProcessingTask processingTask = new ProcessingTask();
-        String id = managerService.processCorrection(processingTask, periodRequest);
-        String statusUrl = request.getContextPath() + "/api/corrections/tasks/" + id;
+        String id = managerService.submitMissingEditionsTask(processingTask, periodRequest);
+        String statusUrl = request.getContextPath() + "/api/corrections/missing-editions/tasks/" + id;
         TaskSubmissionResponse response = new TaskSubmissionResponse(id, "PENDING", statusUrl, statusUrl);
 
         return ResponseEntity.accepted()
@@ -83,7 +83,7 @@ public class CorrectionController {
                 .body(response);
     }
 
-    @GetMapping("/missing-edition/tasks/{id}")
+    @GetMapping("/missing-editions/tasks/{id}")
     @Operation(summary = "Get task status", description = "Returns the current state and progress of an asynchronous correction task.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task status found",
@@ -103,7 +103,7 @@ public class CorrectionController {
         return ResponseEntity.ok(taskStatus);
     }
 
-    @DeleteMapping("/missing-edition/tasks/{id}")
+    @DeleteMapping("/missing-editions/tasks/{id}")
     @Operation(summary = "Cancel task", description = "Requests cancellation of an asynchronous correction task and returns the updated status.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task cancellation requested",
@@ -125,7 +125,7 @@ public class CorrectionController {
         return ResponseEntity.ok(managerService.getTaskStatus(taskId));
     }
 
-    @GetMapping("/missing-edition/tasks")
+    @GetMapping("/missing-editions/tasks")
     @Operation(summary = "List tasks", description = "Returns a paged list of known correction tasks stored in memory.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Task list returned",

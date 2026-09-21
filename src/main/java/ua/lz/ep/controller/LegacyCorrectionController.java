@@ -33,7 +33,7 @@ public class LegacyCorrectionController {
     @PostMapping("/start")
     public ResponseEntity<String> startProcessing(@Valid @RequestBody PeriodRequest periodRequest) {
         ProcessingTask processingTask = new ProcessingTask();
-        String id = managerService.processCorrection(processingTask, periodRequest);
+        String id = managerService.submitMissingEditionsTask(processingTask, periodRequest);
         return ResponseEntity.accepted().body(id);
     }
 
