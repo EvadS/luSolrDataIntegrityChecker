@@ -22,7 +22,7 @@ import ua.lz.ep.service.MissingEditionManagerService;
 @Hidden
 @RestController
 @RequestMapping("/api/correction/task")
-public class LegacyCorrectionController {
+public class LegacyCorrectionController implements LegacyCorrectionApi {
 
     private final MissingEditionManagerService managerService;
 
