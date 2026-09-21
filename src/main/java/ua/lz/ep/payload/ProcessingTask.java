@@ -20,7 +20,6 @@ public class ProcessingTask {
     @Schema(description = "Task progress in percent", example = "0")
     private volatile Integer progress = 0;
 
-    // todo: всего документов
     @Schema(description = "Documents number", example = "0")
     private volatile Integer documentsNumber = 0;
 

@@ -19,7 +19,7 @@ import java.util.concurrent.Future;
 
 @Log4j2
 @Service
-public class MissingEditionManagerService {
+public class EditionDocsManagerService {
 
     private final SolrService solrService;
     private final StorageManager  storageManager;
@@ -28,7 +28,7 @@ public class MissingEditionManagerService {
     private final Map<String, Future<?>> activeTasks = new ConcurrentHashMap<>();
     private final Map<String, ProcessingTask> taskRegistry = new ConcurrentHashMap<>();
 
-    public MissingEditionManagerService(
+    public EditionDocsManagerService(
             SolrService solrService,
             StorageManager  storageManager,
             @Qualifier("correctionTaskExecutor") ThreadPoolTaskExecutor taskExecutor) {

@@ -27,7 +27,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class MissingEditionManagerServiceTest {
+class EditionDocsManagerServiceTest {
 
     private final ThreadPoolTaskExecutor executor = testExecutor();
     private final StorageManager storageManager = mock(StorageManager.class);
@@ -49,7 +49,7 @@ class MissingEditionManagerServiceTest {
             return List.of("edition-1", "edition-2");
         });
 
-        MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
+        EditionDocsManagerService managerService = new EditionDocsManagerService(solrService, storageManager, executor);
 
         String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
@@ -91,7 +91,7 @@ class MissingEditionManagerServiceTest {
             }
         });
 
-        MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
+        EditionDocsManagerService managerService = new EditionDocsManagerService(solrService, storageManager, executor);
 
         String taskId = managerService.processCorrection(new ProcessingTask(), periodRequest);
         waitUntil(() -> enteredProcessing.get(), 2_000);
@@ -112,7 +112,7 @@ class MissingEditionManagerServiceTest {
         PeriodRequest periodRequest = validCorrectionRequest();
         when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class))).thenReturn(List.of());
 
-        MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
+        EditionDocsManagerService managerService = new EditionDocsManagerService(solrService, storageManager, executor);
         managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
         managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
@@ -144,7 +144,7 @@ class MissingEditionManagerServiceTest {
                         return List.of("edition-1");
                     });
 
-            MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
+            EditionDocsManagerService managerService = new EditionDocsManagerService(solrService, storageManager, executor);
 
             String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 
@@ -188,7 +188,7 @@ class MissingEditionManagerServiceTest {
             when(solrService.findBrokenEdition(eq(periodRequest), any(ProcessingTask.class)))
                     .thenThrow(new IllegalStateException("Solr is unavailable"));
 
-            MissingEditionManagerService managerService = new MissingEditionManagerService(solrService, storageManager, executor);
+            EditionDocsManagerService managerService = new EditionDocsManagerService(solrService, storageManager, executor);
 
             String taskId = managerService.submitMissingEditionsTask(new ProcessingTask(), periodRequest);
 

@@ -15,12 +15,12 @@ import ua.lz.ep.config.OpenApiConstants;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
-import ua.lz.ep.dto.response.TaskStatus;
+
 import ua.lz.ep.dto.response.TaskSubmissionResponse;
 
 @Tag(name = "Corrections",
         description = "Operations for starting, tracking, listing and stopping correction tasks (missing editions, edition counts)")
-public interface MissingEditionsApi {
+public interface EditionDocsControllerApi {
 
     @Operation(summary = "Start missing editions check",
             description = "Starts an asynchronous task that detects missing editions according to the provided filter (period or explicit documentIds). Returns task identifier and links to status/report.")

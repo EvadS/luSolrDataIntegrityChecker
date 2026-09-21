@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import ua.lz.ep.config.ApplicationConstants;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.request.PageRequest;
 import ua.lz.ep.dto.response.ApiErrorResponse;
@@ -17,28 +18,30 @@ import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
 import ua.lz.ep.dto.response.TaskSubmissionResponse;
 import ua.lz.ep.payload.ProcessingTask;
-import ua.lz.ep.service.MissingEditionManagerService;
+import ua.lz.ep.service.EditionDocsManagerService;
 
 
 @RestController
-@RequestMapping("/api/corrections")
+@RequestMapping(ApplicationConstants.DOCUMENTS_API)
 @Validated
-public class MissingEditionsController implements MissingEditionsApi {
+public class EditionDocsController implements EditionDocsControllerApi {
 
-    private final MissingEditionManagerService managerService;
 
-    public MissingEditionsController(MissingEditionManagerService managerService) {
+    private final EditionDocsManagerService managerService;
+
+    public EditionDocsController(EditionDocsManagerService managerService) {
         this.managerService = managerService;
     }
 
-    @PostMapping(path = {"/missing-editions"})
+    @PostMapping(path = {ApplicationConstants.MISSING_EDITIONS})
     @ResponseStatus(HttpStatus.ACCEPTED)
     public ResponseEntity<TaskSubmissionResponse> createMissingEditionsTask(
             @Valid @org.springframework.web.bind.annotation.RequestBody PeriodRequest periodRequest,
             HttpServletRequest request) {
         ProcessingTask processingTask = new ProcessingTask();
+
         String id = managerService.submitMissingEditionsTask(processingTask, periodRequest);
-        String statusUrl = request.getContextPath() + "/api/corrections/missing-editions/tasks/" + id;
+        String statusUrl = request.getContextPath() + ApplicationConstants.DOCUMENTS_API + ApplicationConstants.MISSING_EDITIONS + "/tasks/" + id;
         TaskSubmissionResponse response = new TaskSubmissionResponse(id, "PENDING", statusUrl, statusUrl);
 
         return ResponseEntity.accepted()
@@ -46,7 +49,7 @@ public class MissingEditionsController implements MissingEditionsApi {
                 .body(response);
     }
 
-    @GetMapping("/missing-editions/tasks/{id}")
+    @GetMapping(ApplicationConstants.MISSING_EDITIONS + "/tasks/{id}")
     public ResponseEntity<?> getTaskStatus(
             @PathVariable("id") String taskId,
             HttpServletRequest request) {
@@ -58,7 +61,7 @@ public class MissingEditionsController implements MissingEditionsApi {
         return ResponseEntity.ok(taskStatus);
     }
 
-    @DeleteMapping("/missing-editions/tasks/{id}")
+    @DeleteMapping(ApplicationConstants.MISSING_EDITIONS + "/tasks/{id}")
     public ResponseEntity<?> cancelTask(
             @PathVariable("id") String taskId,
             HttpServletRequest request) {
@@ -72,7 +75,7 @@ public class MissingEditionsController implements MissingEditionsApi {
         return ResponseEntity.ok(managerService.getTaskStatus(taskId));
     }
 
-    @GetMapping("/missing-editions/tasks")
+    @GetMapping(ApplicationConstants.MISSING_EDITIONS + "/tasks")
     public ResponseEntity<PageTaskStatus<TaskStatus>> getTasks(
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Positive int size,
@@ -84,5 +87,7 @@ public class MissingEditionsController implements MissingEditionsApi {
 
         return ResponseEntity.ok(managerService.findAll(pageable));
     }
+
+
 
 }

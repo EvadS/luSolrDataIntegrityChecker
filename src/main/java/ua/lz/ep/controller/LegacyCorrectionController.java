@@ -17,16 +17,16 @@ import ua.lz.ep.dto.response.ApiErrorResponse;
 import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
 import ua.lz.ep.payload.ProcessingTask;
-import ua.lz.ep.service.MissingEditionManagerService;
+import ua.lz.ep.service.EditionDocsManagerService;
 
 @Hidden
 @RestController
 @RequestMapping("/api/correction/task")
 public class LegacyCorrectionController implements LegacyCorrectionApi {
 
-    private final MissingEditionManagerService managerService;
+    private final EditionDocsManagerService managerService;
 
-    public LegacyCorrectionController(MissingEditionManagerService managerService) {
+    public LegacyCorrectionController(EditionDocsManagerService managerService) {
         this.managerService = managerService;
     }
 
