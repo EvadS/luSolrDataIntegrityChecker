@@ -1,6 +1,7 @@
 package ua.lz.ep.service;
 
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.payload.ProcessingTask;
 
 import java.util.List;
@@ -13,5 +14,9 @@ public interface SolrService {
     List<String> findBrokenEdition(PeriodRequest periodRequest, ProcessingTask processingTask);
 
     List<String> searchEditionIdMismatches(PeriodRequest periodRequest, ProcessingTask processingTask);
+
+    List<String> findEditionIdsDiffs(EditionListDiff editionListDiff);
+
+    List<String> findEditionIdsDiffs(EditionListDiff editionListDiff, ProcessingTask processingTask);
 }
 

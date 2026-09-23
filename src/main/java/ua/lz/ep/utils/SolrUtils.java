@@ -2,7 +2,8 @@ package ua.lz.ep.utils;
 
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.util.ClientUtils;
-import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.EditionListDiff;
+import ua.lz.ep.dto.PeriodDocsRequest;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -16,7 +17,28 @@ public class SolrUtils {
         // Private constructor to prevent instantiation
     }
 
-    public static SolrQuery createCorrectRequest(PeriodRequest periodRequest){
+
+    public static SolrQuery createEditionIdsRequest(PeriodDocsRequest periodRequest){
+        validatePeriodRequest(periodRequest);
+
+        SolrQuery solrQuery = new SolrQuery();
+        solrQuery.addField(SolrConstants.FIELD_ID);
+        solrQuery.addField(SolrConstants.FIELD_EDITION_LIST_FULL);
+        solrQuery.addField(SolrConstants.FIELD_EDITION_LIST_IDS);
+
+        List<String> filters = new ArrayList<>();
+        addDocumentIdsFilter(periodRequest, filters);
+        addPeriodFilter(periodRequest, filters);
+
+        String query = filters.isEmpty()
+                ? SolrConstants.MATCH_ALL_QUERY
+                : String.join(" AND ", filters);
+
+        return solrQuery.setQuery(query);
+    }
+
+
+    public static SolrQuery createCorrectRequest(PeriodDocsRequest periodRequest){
         validatePeriodRequest(periodRequest);
 
        SolrQuery solrQuery = new SolrQuery();
@@ -39,9 +61,9 @@ public class SolrUtils {
         return value.atZone(ZoneOffset.UTC).format(SolrConstants.DATE_TIME_FORMATTER);
     }
 
-    private static void validatePeriodRequest(PeriodRequest periodRequest) {
+    private static void validatePeriodRequest(PeriodDocsRequest periodRequest) {
         if (periodRequest == null) {
-            throw new IllegalArgumentException("PeriodRequest must not be null");
+            throw new IllegalArgumentException("PeriodDocsRequest must not be null");
         }
 
         LocalDateTime startPeriod = periodRequest.getStartPeriod();
@@ -51,7 +73,7 @@ public class SolrUtils {
         }
     }
 
-    private static void addDocumentIdsFilter(PeriodRequest periodRequest, List<String> filters) {
+    private static void addDocumentIdsFilter(PeriodDocsRequest periodRequest, List<String> filters) {
         List<String> documentIds = periodRequest.getDocumentIds() == null
                 ? List.of()
                 : periodRequest.getDocumentIds().stream()
@@ -67,7 +89,7 @@ public class SolrUtils {
         }
     }
 
-    private static void addPeriodFilter(PeriodRequest periodRequest, List<String> filters) {
+    private static void addPeriodFilter(PeriodDocsRequest periodRequest, List<String> filters) {
         LocalDateTime startPeriod = periodRequest.getStartPeriod();
         LocalDateTime endPeriod = periodRequest.getEndPeriod();
 
@@ -92,13 +114,4 @@ public class SolrUtils {
                     formatForSolr(endPeriod)));
         }
     }
-
-
-//    public static SolrQuery createEditionIdMismatchRequest(PeriodRequest periodRequest) {
-//        validatePeriodRequest(periodRequest);
-//        List<String> filters = new ArrayList<>();
-//        addDocumentIdsFilter(periodRequest, filters);
-//        addPeriodFilter(periodRequest, filters);
-//        return buildSolrQuery(filters);
-//    }
 }

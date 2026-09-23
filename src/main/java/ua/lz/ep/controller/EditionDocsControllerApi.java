@@ -15,6 +15,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
 import ua.lz.ep.config.OpenApiConstants;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.dto.response.PageTaskStatus;
 import ua.lz.ep.dto.response.TaskStatus;
 
@@ -50,6 +51,62 @@ public interface EditionDocsControllerApi {
                             """)
             }))
     org.springframework.http.ResponseEntity<TaskSubmissionResponse> createMissingEditionsTask(@Valid PeriodRequest periodRequest, HttpServletRequest request);
+
+
+    @Operation(summary = "Start editions diff check",
+            description = "Starts an asynchronous task that checks edition id and edition_list_full.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Task accepted for asynchronous processing",
+                    content = @Content(schema = @Schema(implementation = TaskSubmissionResponse.class)) ),
+            @ApiResponse(ref = OpenApiConstants.BAD_REQUEST_RESPONSE_REF),
+            @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
+    })
+    @RequestBody(description = "Request with optional documents filter and/or period boundaries. Do not set correctionType.", required = true,
+            content = @Content(schema = @Schema(implementation = EditionListDiff.class), examples = {
+                    @ExampleObject(name = "By period", value = """
+                            {
+                              "startPeriod": "2026-01-09T00:00:00",
+                              "endPeriod": "2026-07-09T23:59:00",
+                                                  "documentIds": []
+                            }
+                            """),
+                    @ExampleObject(name = "By documents", value = """
+                            {
+                                                  "documentIds": ["doc-1001", "doc-1002"]
+                            }
+                            """)
+            }))
+    org.springframework.http.ResponseEntity<TaskSubmissionResponse> createEditionsDiffTask(@Valid EditionListDiff editionListDiff, HttpServletRequest request);
+
+
+    @Operation(summary = "Get editions-diff task status", description = "Returns the current state and progress of an editions-diff asynchronous task.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Task status found",
+                    content = @Content(schema = @Schema(implementation = TaskStatus.class)) ),
+            @ApiResponse(ref = OpenApiConstants.NOT_FOUND_RESPONSE_REF),
+            @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
+    })
+    org.springframework.http.ResponseEntity<?> getEditionsDiffTaskStatus(@Parameter(description = "Identifier returned by the start endpoint", example = "7d0f22f5-0f86-4a4e-b2a0-76c0c8b8043d") String taskId, HttpServletRequest request);
+
+
+    @Operation(summary = "Cancel editions-diff task", description = "Requests cancellation of an editions-diff asynchronous task and returns the updated status.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Task cancellation requested",
+                    content = @Content(schema = @Schema(implementation = TaskStatus.class)) ),
+            @ApiResponse(ref = OpenApiConstants.NOT_FOUND_RESPONSE_REF),
+            @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
+    })
+    org.springframework.http.ResponseEntity<?> cancelEditionsDiffTask(@Parameter(description = "Identifier returned by the start endpoint", example = "7d0f22f5-0f86-4a4e-b2a0-76c0c8b8043d") String taskId, HttpServletRequest request);
+
+
+    @Operation(summary = "List editions-diff tasks", description = "Returns a paged list of known editions-diff tasks stored in memory.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Task list returned",
+                    content = @Content(schema = @Schema(implementation = PageTaskStatus.class)) ),
+            @ApiResponse(ref = OpenApiConstants.BAD_REQUEST_RESPONSE_REF),
+            @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
+    })
+    org.springframework.http.ResponseEntity<PageTaskStatus<TaskStatus>> getEditionsDiffTasks(@Min(0) int page, @Positive int size, String sort);
 
 
     @Operation(summary = "Get task status", description = "Returns the current state and progress of an asynchronous correction task.")

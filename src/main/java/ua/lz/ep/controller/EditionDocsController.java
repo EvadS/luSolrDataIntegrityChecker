@@ -2,8 +2,6 @@ package ua.lz.ep.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 import ua.lz.ep.config.ApplicationConstants;
 import ua.lz.ep.dto.PeriodRequest;
+import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.dto.request.PageRequest;
 import ua.lz.ep.dto.response.ApiErrorResponse;
 import ua.lz.ep.dto.response.PageTaskStatus;
@@ -88,6 +87,60 @@ public class EditionDocsController implements EditionDocsControllerApi {
         return ResponseEntity.ok(managerService.findAll(pageable));
     }
 
+    // ------------------ editions diff endpoints ------------------
+    @PostMapping(path = {ApplicationConstants.EDITIONS_DIFF})
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ResponseEntity<TaskSubmissionResponse> createEditionsDiffTask(
+            @Valid @org.springframework.web.bind.annotation.RequestBody EditionListDiff editionListDiff,
+            HttpServletRequest request) {
+        ProcessingTask processingTask = new ProcessingTask();
 
+        String id = managerService.submitEditionsDiffTask(processingTask, editionListDiff);
+        String statusUrl = request.getContextPath() + ApplicationConstants.DOCUMENTS_API + ApplicationConstants.EDITIONS_DIFF + "/tasks/" + id;
+        TaskSubmissionResponse response = new TaskSubmissionResponse(id, "PENDING", statusUrl, statusUrl);
+
+        return ResponseEntity.accepted()
+                .header(HttpHeaders.LOCATION, statusUrl)
+                .body(response);
+    }
+
+    @GetMapping(ApplicationConstants.EDITIONS_DIFF + "/tasks/{id}")
+    public ResponseEntity<?> getEditionsDiffTaskStatus(
+            @PathVariable("id") String taskId,
+            HttpServletRequest request) {
+        TaskStatus taskStatus = managerService.getTaskStatus(taskId);
+        if (taskStatus == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND, "Task '" + taskId + "' was not found.", request.getRequestURI()));
+        }
+        return ResponseEntity.ok(taskStatus);
+    }
+
+    @DeleteMapping(ApplicationConstants.EDITIONS_DIFF + "/tasks/{id}")
+    public ResponseEntity<?> cancelEditionsDiffTask(
+            @PathVariable("id") String taskId,
+            HttpServletRequest request) {
+        TaskStatus currentStatus = managerService.getTaskStatus(taskId);
+        if (currentStatus == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND, "Task '" + taskId + "' was not found.", request.getRequestURI()));
+        }
+
+        managerService.stopTask(taskId);
+        return ResponseEntity.ok(managerService.getTaskStatus(taskId));
+    }
+
+    @GetMapping(ApplicationConstants.EDITIONS_DIFF + "/tasks")
+    public ResponseEntity<PageTaskStatus<TaskStatus>> getEditionsDiffTasks(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sort) {
+        PageRequest pageable = new PageRequest();
+        pageable.setPage(page);
+        pageable.setSize(size);
+        pageable.setSort(sort);
+
+        return ResponseEntity.ok(managerService.findAll(pageable));
+    }
 
 }

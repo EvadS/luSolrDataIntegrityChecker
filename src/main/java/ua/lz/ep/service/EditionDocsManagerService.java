@@ -4,6 +4,7 @@ import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
+import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.payload.ProcessingResult;
 import ua.lz.ep.dto.request.PageRequest;
@@ -87,6 +88,34 @@ public class EditionDocsManagerService {
             storageManager.storedReportData(processingResul);
             processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
         }, "Correction completed successfully");
+
+        return taskId;
+    }
+
+    /**
+     * Submit an editions-diff task for asynchronous execution.
+     * Input EditionListDiff for this flow must NOT include correctionType (validated by SolrService implementation where needed).
+     */
+    public String submitEditionsDiffTask(ProcessingTask processingTask, EditionListDiff editionListDiff) {
+        String taskId = resolveTaskId(processingTask);
+        processingTask.initialize(taskId, "Editions diff task queued for execution");
+        taskRegistry.put(taskId, processingTask);
+
+        log.debug("Creating editions-diff processing task {} for request: {}", taskId, editionListDiff);
+
+        submitTask(processingTask, () -> {
+            LocalDateTime startProcessingTime = LocalDateTime.now();
+
+            List<String> diffs = solrService.findEditionIdsDiffs(editionListDiff, processingTask);
+            int diffCount = diffs == null ? 0 : diffs.size();
+
+            ProcessingResult processingResul = new ProcessingResult();
+            processingResul.getLostEditions().addAll(diffs);
+            processingResul.setProcessingStartTime(startProcessingTime);
+
+            storageManager.storedReportData(processingResul);
+            processingTask.updateProgress(100, "Editions-diff finished. Found " + diffCount + " problematic items.");
+        }, "Editions-diff completed successfully");
 
         return taskId;
     }
