@@ -325,7 +325,8 @@ public class SolrServiceImpl implements SolrService {
             }
 
             // Wait for completion and preserve order by iterating futures in same order
-            for (java.util.concurrent.CompletableFuture<java.util.List<String>> future : futures) {
+            for (int fi = 0; fi < futures.size(); fi++) {
+                java.util.concurrent.CompletableFuture<java.util.List<String>> future = futures.get(fi);
                 try {
                     java.util.List<String> editions = future.join();
                     if (editions != null && !editions.isEmpty()) {
@@ -333,6 +334,17 @@ public class SolrServiceImpl implements SolrService {
                     }
                 } catch (CancellationException e) {
                     log.error("Processing was cancelled while waiting for a document to finish", e);
+                    // Cancel remaining futures to avoid leaving tasks running in executor after cancellation
+                    for (int cj = fi + 1; cj < futures.size(); cj++) {
+                        java.util.concurrent.CompletableFuture<java.util.List<String>> toCancel = futures.get(cj);
+                        if (!toCancel.isDone() && !toCancel.isCancelled()) {
+                            try {
+                                toCancel.cancel(true);
+                            } catch (Exception cancelEx) {
+                                log.warn("Failed to cancel future #{}: {}", cj, cancelEx.getMessage());
+                            }
+                        }
+                    }
                     Thread.currentThread().interrupt();
                     throw e;
                 } catch (Exception e) {
