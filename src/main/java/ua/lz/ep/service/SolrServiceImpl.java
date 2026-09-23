@@ -29,28 +29,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Log4j2
 @Service
-
-/**
-     * Реализация сервиса работы с Solr: поиск, валидация и коррекция данных.
-     *
-     * Основные обязанности:
-     * - Проверять доступность коллекций Solr (pingCollection)
-     * - Выполнять постраничный обход документов и параллельную обработку
-     *   для поиска несоответствий между документами и их редакциями
-     * - Поддерживать метрики обработки (количество, ошибки, средняя задержка)
-     *
-     * Класс потокобезопасен для вызова методов обработки документов: в нём
-     * реализована логика повторов, ограничение числа параллельных задач и
-     * аккуратная обработка отмены через CancellationException.
-     */
-    public class SolrServiceImpl implements SolrService {
+public class SolrServiceImpl implements SolrService {
 
     private static final int BATCH_SIZE = 5000;
     private final SolrClient solrClient;
@@ -62,24 +47,10 @@ import java.util.concurrent.ThreadPoolExecutor;
     private final ProgressReporter progressReporter;
 
     // simple metrics exposed for tests: processed count, failures and total latency
-    private final java.util.concurrent.atomic.AtomicInteger processedCount = new java.util.concurrent.atomic.AtomicInteger(0);
-    private final java.util.concurrent.atomic.AtomicInteger failuresCount = new java.util.concurrent.atomic.AtomicInteger(0);
-    private final java.util.concurrent.atomic.AtomicLong totalLatencyMs = new java.util.concurrent.atomic.AtomicLong(0L);
+    private final AtomicInteger processedCount = new AtomicInteger(0);
+    private final AtomicInteger failuresCount = new AtomicInteger(0);
+    private final AtomicLong totalLatencyMs = new AtomicLong(0L);
 
-    // Global semaphore limiting outstanding submissions across findBrokenEdition invocations
-    private volatile java.util.concurrent.Semaphore submitSemaphore = null;
-
-/**
-     * Создаёт экземпляр сервиса с зависимостями, выставляемыми Spring.
-     * Выполняет логирование конфигурации и валидацию подключения к коллекциям.
-     *
-     * @param solrClient клиент Solr
-     * @param solrProperties свойства Solr (имена коллекций, url)
-     * @param environment Spring Environment для определения профиля
-     * @param correctionTaskExecutor пул задач для параллельной обработки
-     * @param correctionProperties свойства повторов/таймаутов
-     * @param progressReporter компонент для отчёта прогресса
-     */
     @org.springframework.beans.factory.annotation.Autowired
     public SolrServiceImpl(
             @Qualifier("ipsuSolrClient") SolrClient solrClient,
@@ -97,8 +68,6 @@ import java.util.concurrent.ThreadPoolExecutor;
         this.progressReporter = progressReporter;
 
         logConfiguration();
-        validateCollectionConnection("collection1", solrProperties.getCollection1());
-        validateCollectionConnection("edition", solrProperties.getEdition());
     }
 
     // Backward-compatible constructor for tests/beans that don't provide CorrectionProperties
@@ -150,36 +119,24 @@ import java.util.concurrent.ThreadPoolExecutor;
         }
     }
 
-    /**
-     * Поиск "сломанных" редакций для документов, соответствующих заданному периоду.
-     * Метод обходит документы постранично, параллельно обрабатывает документы и
-     * возвращает список id документов или редакций, которые не существуют в коллекции
-     * редакций.
-     *
-     * @param periodRequest критерии поиска (включая тип коррекции)
-     * @return список идентификаторов несуществующих редакций или документов
-     */
-    @Override
-    public List<String> findBrokenEdition(PeriodRequest periodRequest) {
-        return findBrokenEdition(periodRequest, null);
-    }
 
     /**
-     * То же, что и {@link #findBrokenEdition(PeriodRequest)}, но с возможностью
-     * отслеживания прогресса через ProcessingTask.
+     * Поиск документов с несуществующими редакции
      *
-     * @param periodRequest критерии поиска
+     * @param periodRequest  критерии поиска
      * @param processingTask объект для обновления прогресса (может быть null)
      * @return список идентификаторов несуществующих редакций или документов
      */
+
+    // todo: A1
     @Override
     public List<String> findBrokenEdition(PeriodRequest periodRequest, ProcessingTask processingTask) {
-        List<String> notExistedEdition = new ArrayList<>();
+        List<String> missingEditionIds = new ArrayList<>();
         int currentPositions = 0;
         int totalDocuments;
         int currentItem = 0;
 
-        SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
+        SolrQuery solrQuery = SolrUtils.createMissingEditionSolrQuery(periodRequest);
         totalDocuments = getDocumentsNumber(solrQuery);
         updateDocumentInProcessingTask(processingTask, totalDocuments);
 
@@ -198,42 +155,50 @@ import java.util.concurrent.ThreadPoolExecutor;
             ThreadPoolExecutor underlying = correctionTaskExecutor.getThreadPoolExecutor();
             Executor executor = underlying;
 
-            // initialize global submitSemaphore if needed
-            if (submitSemaphore == null) {
-                synchronized (this) {
-                    if (submitSemaphore == null) {
-                        int poolSize = Math.max(1, correctionTaskExecutor.getMaxPoolSize());
-                        int queueCapacity = Math.max(0, underlying.getQueue().remainingCapacity());
-                        int maxOutstanding = Math.max(1, poolSize + queueCapacity);
-                        submitSemaphore = new java.util.concurrent.Semaphore(maxOutstanding);
-                        log.info("Initialized submitSemaphore with maxOutstanding={}", maxOutstanding);
-                    }
-                }
-            }
-
             List<CompletableFuture<List<String>>> futures = new ArrayList<>(batchSize);
 
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
                 final SolrDocument curDoc = doc;
-                // acquire permit before submitting to avoid RejectedExecutionException
-                submitSemaphore.acquireUninterruptibly();
-
-                java.util.concurrent.CompletableFuture<List<String>> f;
+                CompletableFuture<List<String>> f;
                 try {
-                    f = CompletableFuture.supplyAsync(() -> processDocumentWithRetries(curDoc, periodRequest.getCorrectionType()), executor)
-                            .whenComplete((r, t) -> {
-                                // always release permit when this submission completes
-                                submitSemaphore.release();
-                            });
-                } catch (java.util.concurrent.RejectedExecutionException ree) {
-                    // fallback: executor rejected despite permits — run processing in caller thread synchronously
+                    f = CompletableFuture.supplyAsync(() -> {
+                        long start = System.nanoTime();
+                        String id = null;
+                        try {
+                            id = extractIdSafely(curDoc);
+                            return processMissingEditionsDocument(curDoc, periodRequest.getCorrectionType());
+                        } catch (CancellationException e) {
+                            throw e;
+                        } catch (Exception e) {
+                            log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                            failuresCount.incrementAndGet();
+                            return List.of(id == null ? "<unknown>" : id);
+                        } finally {
+                            long end = System.nanoTime();
+                            long latencyMs = (end - start) / 1_000_000;
+                            totalLatencyMs.addAndGet(latencyMs);
+                            processedCount.incrementAndGet();
+                        }
+                    }, executor);
+                } catch (RejectedExecutionException ree) {
+                    // fallback: executor rejected — run processing in caller thread synchronously
+                    long start = System.nanoTime();
+                    String id = null;
                     try {
-                        java.util.List<String> syncResult = processDocumentWithRetries(curDoc, periodRequest.getCorrectionType());
+                        id = extractIdSafely(curDoc);
+                        List<String> syncResult = processMissingEditionsDocument(curDoc, periodRequest.getCorrectionType());
                         f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
+                    } catch (Exception e) {
+                        log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                        failuresCount.incrementAndGet();
+                        f = CompletableFuture.completedFuture(List.of(id == null ? "<unknown>" : id));
                     } finally {
-                        submitSemaphore.release();
+                        long end = System.nanoTime();
+                        long latencyMs = (end - start) / 1_000_000;
+                        totalLatencyMs.addAndGet(latencyMs);
+                        processedCount.incrementAndGet();
                     }
                 }
 
@@ -245,7 +210,7 @@ import java.util.concurrent.ThreadPoolExecutor;
                 try {
                     java.util.List<String> editions = future.join();
                     if (editions != null && !editions.isEmpty()) {
-                        notExistedEdition.addAll(editions);
+                        missingEditionIds.addAll(editions);
                     }
                 } catch (CancellationException e) {
                     log.error("Processing was cancelled while waiting for a document to finish", e);
@@ -253,7 +218,6 @@ import java.util.concurrent.ThreadPoolExecutor;
                     throw e;
                 } catch (Exception e) {
                     log.error("Unexpected error while processing document batch", e);
-                    // best-effort: continue with next
                 }
             }
 
@@ -267,7 +231,7 @@ import java.util.concurrent.ThreadPoolExecutor;
                 break;
             }
 
-            currentPositions += BATCH_SIZE;
+            currentPositions += batchDocuments.size();
             progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
 
             updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
@@ -281,30 +245,9 @@ import java.util.concurrent.ThreadPoolExecutor;
             }
         }
 
-        return notExistedEdition;
+        return missingEditionIds;
     }
 
-
-    /**
-     * Сравнивает два списка редакций внутри документа и возвращает id документов,
-     * в которых обнаружено расхождение между полями editionList и editionListFull.
-     *
-     * @param editionListDiff DTO с параметрами сравнения
-     * @return список id документов с расхождениями
-     */
-    @Override
-    public List<String> findEditionIdsDiffs(ua.lz.ep.dto.EditionListDiff editionListDiff) {
-        return findEditionIdsDiffs(editionListDiff, null);
-    }
-
-    /**
-     * То же, что и {@link #findEditionIdsDiffs(ua.lz.ep.dto.EditionListDiff)},
-     * но с обновлением прогресса в ProcessingTask.
-     *
-     * @param editionListDiff DTO с параметрами сравнения
-     * @param processingTask объект для обновления прогресса (может быть null)
-     * @return список id документов с расхождениями
-     */
     @Override
     public List<String> findEditionIdsDiffs(EditionListDiff editionListDiff, ProcessingTask processingTask) {
         List<String> missMatchingEditionList = new ArrayList<>();
@@ -331,43 +274,50 @@ import java.util.concurrent.ThreadPoolExecutor;
             ThreadPoolExecutor underlying = correctionTaskExecutor.getThreadPoolExecutor();
             Executor executor = underlying;
 
-            // initialize global submitSemaphore if needed
-            if (submitSemaphore == null) {
-                synchronized (this) {
-                    if (submitSemaphore == null) {
-                        int poolSize = Math.max(1, correctionTaskExecutor.getMaxPoolSize());
-                        int queueCapacity = Math.max(0, underlying.getQueue().remainingCapacity());
-                        int maxOutstanding = Math.max(1, poolSize + queueCapacity);
-                        submitSemaphore = new java.util.concurrent.Semaphore(maxOutstanding);
-                        log.info("Initialized submitSemaphore with maxOutstanding={}", maxOutstanding);
-                    }
-                }
-            }
-
             List<CompletableFuture<List<String>>> futures = new ArrayList<>(batchSize);
 
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Editions-diff processing was cancelled while iterating documents");
 
                 final SolrDocument curDoc = doc;
-                // acquire permit before submitting to avoid RejectedExecutionException
-                submitSemaphore.acquireUninterruptibly();
 
                 CompletableFuture<List<String>> f;
                 try {
-
-                    f = CompletableFuture.supplyAsync(() -> processEditionIDsWithRetries(curDoc, editionListDiff.getDiffResultType()), executor)
-                            .whenComplete((r, t) -> {
-                                // always release permit when this submission completes
-                                submitSemaphore.release();
-                            });
+                    f = CompletableFuture.supplyAsync(() -> {
+                        long start = System.nanoTime();
+                        String id = null;
+                        try {
+                            id = extractIdSafely(curDoc);
+                            return processEditionDiffIds(curDoc, editionListDiff.getDiffResultType());
+                        } catch (CancellationException e) {
+                            throw e;
+                        } catch (Exception e) {
+                            log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                            failuresCount.incrementAndGet();
+                            return java.util.List.of(id == null ? "<unknown>" : id);
+                        } finally {
+                            long end = System.nanoTime();
+                            long latencyMs = (end - start) / 1_000_000;
+                            totalLatencyMs.addAndGet(latencyMs);
+                            processedCount.incrementAndGet();
+                        }
+                    }, executor);
                 } catch (java.util.concurrent.RejectedExecutionException ree) {
-                    // fallback: executor rejected despite permits — run processing in caller thread synchronously
+                    long start = System.nanoTime();
+                    String id = null;
                     try {
-                        java.util.List<String> syncResult = processEditionIDsWithRetries(curDoc, editionListDiff.getDiffResultType());
+                        id = extractIdSafely(curDoc);
+                        java.util.List<String> syncResult = processEditionDiffIds(curDoc, editionListDiff.getDiffResultType());
                         f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
+                    } catch (Exception e) {
+                        log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                        failuresCount.incrementAndGet();
+                        f = java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of(id == null ? "<unknown>" : id));
                     } finally {
-                        submitSemaphore.release();
+                        long end = System.nanoTime();
+                        long latencyMs = (end - start) / 1_000_000;
+                        totalLatencyMs.addAndGet(latencyMs);
+                        processedCount.incrementAndGet();
                     }
                 }
 
@@ -401,7 +351,7 @@ import java.util.concurrent.ThreadPoolExecutor;
                 break;
             }
 
-            currentPositions += BATCH_SIZE;
+            currentPositions += batchDocuments.size();
             progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
 
             updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
@@ -420,10 +370,13 @@ import java.util.concurrent.ThreadPoolExecutor;
 
     private List<String> processEditionIDsWithRetries(SolrDocument curDoc, EditionDiffResultType diffResultType) {
         long start = System.nanoTime();
-        String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
+        String id = null;
         boolean failed = false;
         List<String> resultList = null;
         try {
+            // Ensure id is present and valid before processing; missing id is a bad document and should fail fast
+            id = extractIdSafely(curDoc);
+
             int attempt = 0;
             while (true) {
                 attempt++;
@@ -457,140 +410,8 @@ import java.util.concurrent.ThreadPoolExecutor;
             if (failed) {
                 failuresCount.incrementAndGet();
             }
-            log.trace("Processed doc {} in {} ms (failed={})", id, latencyMs, failed);
+            log.trace("Processed doc {} in {} ms (failed={})", id == null ? "<unknown>" : id, latencyMs, failed);
         }
-    }
-
-    /**
-     * Ищет несоответствия между id документа и id его редакций для документов,
-     * подходящих под заданный период. Возвращает список несуществующих редакций
-     * или id документов в зависимости от типа проверки.
-     *
-     * @param periodRequest критерии поиска
-     * @param processingTask объект для обновления прогресса (может быть null)
-     * @return список идентификаторов несуществующих редакций или документов
-     */
-    @Override
-    public List<String> searchEditionIdMismatches(PeriodRequest periodRequest, ProcessingTask processingTask) {
-        List<String> notExistedEdition = new ArrayList<>();
-        int currentPositions = 0;
-        int totalDocuments;
-        int currentItem = 0;
-
-        SolrQuery solrQuery = SolrUtils.createCorrectRequest(periodRequest);
-        totalDocuments = getDocumentsNumber(solrQuery);
-        updateDocumentInProcessingTask(processingTask, totalDocuments);
-
-        while (true) {
-            throwIfInterrupted("Correction processing was cancelled before reading the next batch");
-
-            SolrDocumentList batchDocuments = executeBatchQuery(solrQuery, currentPositions);
-            if (batchDocuments == null || batchDocuments.isEmpty()) {
-                break;
-            }
-
-            int batchSize = batchDocuments.size();
-
-            // Prepare futures for parallel processing while preserving order
-            Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
-            List<java.util.concurrent.CompletableFuture<java.util.List<String>>> futures = new ArrayList<>(batchSize);
-
-            for (SolrDocument doc : batchDocuments) {
-                throwIfInterrupted("Correction processing was cancelled while iterating documents");
-
-                final SolrDocument curDoc = doc;
-                CompletableFuture<List<String>> f = CompletableFuture.supplyAsync(() -> {
-                    long start = System.nanoTime();
-                    String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
-                    boolean failed = false;
-                    List<String> resultList = null;
-                    try {
-                        // retry loop using configured retries
-                        int attempt = 0;
-                        while (true) {
-                            attempt++;
-                            try {
-                                resultList = processEditionIds(curDoc, periodRequest.getCorrectionType());
-                                break; // success
-                            } catch (CancellationException e) {
-                                throw e;
-                            } catch (Exception e) {
-                                log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
-                                if (attempt >= correctionProperties.getMaxRetries()) {
-                                    log.error("Exceeded retries for doc {} - marking as failed", id, e);
-                                    failed = true;
-                                    // save failed id as a failed result so it will be persisted by caller
-                                    resultList = java.util.List.of(id);
-                                    break;
-                                }
-                                try {
-                                    Thread.sleep(100L * attempt);
-                                } catch (InterruptedException ie) {
-                                    Thread.currentThread().interrupt();
-                                    throw new CancellationException("Interrupted during retry backoff");
-                                }
-                            }
-                        }
-                        return new java.util.AbstractMap.SimpleEntry<java.util.List<String>, Boolean>(resultList, failed);
-                    } finally {
-                        long end = System.nanoTime();
-                        long latencyMs = (end - start) / 1_000_000;
-                        totalLatencyMs.addAndGet(latencyMs);
-                        processedCount.incrementAndGet();
-                        log.trace("Processed doc {} in {} ms", id, latencyMs);
-                    }
-                }, executor).thenApply(entry -> {
-                    if (entry != null && Boolean.TRUE.equals(entry.getValue())) {
-                        failuresCount.incrementAndGet();
-                    }
-                    return entry == null ? null : entry.getKey();
-                });
-
-                futures.add(f);
-            }
-
-            // Wait for completion and preserve order by iterating futures in same order
-            for (java.util.concurrent.CompletableFuture<java.util.List<String>> future : futures) {
-                try {
-                    java.util.List<String> editions = future.join();
-                    if (editions != null && !editions.isEmpty()) {
-                        notExistedEdition.addAll(editions);
-                    }
-                } catch (CancellationException e) {
-                    log.warn("Processing was cancelled while waiting for a document to finish", e);
-                    Thread.currentThread().interrupt();
-                    throw e;
-                } catch (Exception e) {
-                    log.error("Unexpected error while processing document batch", e);
-                    // best-effort: continue with next
-                }
-            }
-
-            currentItem += batchDocuments.size();
-            if (processingTask != null && totalDocuments > 0) {
-                int percent = (int) Math.min(100, Math.round((currentItem * 100.0) / totalDocuments));
-                processingTask.updateProgress(percent, "Processed " + currentItem + " of " + totalDocuments + " documents");
-            }
-
-            if (batchDocuments.size() < BATCH_SIZE) {
-                break;
-            }
-
-            currentPositions += BATCH_SIZE;
-            progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
-
-            updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
-        }
-
-        if (processingTask != null) {
-            if (totalDocuments == 0) {
-                processingTask.updateProgress(100, "No documents matched the request");
-            } else {
-                processingTask.updateProgress(100, "Finished processing documents");
-            }
-        }
-
-        return notExistedEdition;
     }
 
 
@@ -600,14 +421,33 @@ import java.util.concurrent.ThreadPoolExecutor;
         }
     }
 
+    /**
+     * Safely extract the document id field from SolrDocument.
+     * Throws IllegalArgumentException when the id is missing or blank so callers can fail fast with a clear message.
+     */
+    private String extractIdSafely(SolrDocument doc) {
+        if (doc == null) {
+            throw new IllegalArgumentException("SolrDocument is null");
+        }
+        Object idObj = doc.getFieldValue(SolrConstants.FIELD_ID);
+        if (idObj == null) {
+            throw new IllegalArgumentException("Solr document is missing required field '" + SolrConstants.FIELD_ID + "'");
+        }
+        String id = idObj.toString();
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Solr document has empty/blank '" + SolrConstants.FIELD_ID + "'");
+        }
+        return id;
+    }
+
     private void updateDocumentInProcessingTask(ProcessingTask processingTask, int documentsNumber) {
         if (processingTask != null) {
             processingTask.setDocumentsNumber(documentsNumber);
         }
     }
-
-    private List<String> processDocument(SolrDocument doc, CorrectionType correctionType) {
-        String id = doc.getFieldValue(SolrConstants.FIELD_ID).toString();
+//todo: A1_2
+    private List<String> processMissingEditionsDocument(SolrDocument doc, CorrectionType correctionType) {
+        String id = extractIdSafely(doc);
 
         Object editionListObj = doc.getFieldValue(SolrConstants.FIELD_EDITION_LIST_IDS);
         List<String> editionList = MappingFieldsHelper.objectToStringList(editionListObj);
@@ -619,12 +459,12 @@ import java.util.concurrent.ThreadPoolExecutor;
     }
 
 
-
+    // todo: api 2
     private List<String> processEditionDiffIds(SolrDocument doc, EditionDiffResultType diffResultType) {
         List<String> diffIds = new ArrayList<>();
 
         // Extract id and edition list from document and check editions existence
-        String id = doc.getFieldValue(SolrConstants.FIELD_ID).toString();
+        String id = extractIdSafely(doc);
 
         Object editionListObj = doc.getFieldValue(SolrConstants.FIELD_EDITION_LIST_IDS);
         List<String> editionList = MappingFieldsHelper.objectToStringList(editionListObj);
@@ -633,8 +473,9 @@ import java.util.concurrent.ThreadPoolExecutor;
         List<String> editionListFullList = MappingFieldsHelper.objectToStringList(editionListFullObj);
 
         // todo: 1. сейчас проверяем только количество
-        if(editionList.size() !=  editionListFullList.size()) {
+        if (editionList.size() != editionListFullList.size()) {
             log.info("doc id:{} has edition lists mismatch size. editionList={}, editionListFull={}", id, editionList.size(), editionListFullList.size());
+            diffIds.add(id);
         }
 //        // Normalize both lists into sets ignoring order, nulls and blank values
 //        java.util.Set<String> setA = new java.util.HashSet<>();
@@ -670,56 +511,7 @@ import java.util.concurrent.ThreadPoolExecutor;
         return diffIds;
     }
 
-    /**
-     * Process a single document with retry logic and metric updates. This method is safe to call from any thread.
-     */
-    // todo: 111
-    private List<String> processDocumentWithRetries(SolrDocument curDoc, CorrectionType correctionType) {
-        long start = System.nanoTime();
-        String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
-        boolean failed = false;
-        List<String> resultList = null;
-        try {
-            int attempt = 0;
-            while (true) {
-                attempt++;
-                try {
-// todo: misssing edition
-                    resultList = processEditionIds(curDoc, correctionType);
-                    break;
-                } catch (CancellationException e) {
-                    throw e;
-                } catch (Exception e) {
-                    log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
-                    if (attempt >= correctionProperties.getMaxRetries()) {
-                        log.error("Exceeded retries for doc {} - marking as failed", id, e);
-                        failed = true;
-                        resultList = java.util.List.of(id);
-                        break;
-                    }
-                    try {
-                        Thread.sleep(100L * attempt);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new CancellationException("Interrupted during retry backoff");
-                    }
-                }
-            }
-            return resultList;
-        } finally {
-            long end = System.nanoTime();
-            long latencyMs = (end - start) / 1_000_000;
-            totalLatencyMs.addAndGet(latencyMs);
-            processedCount.incrementAndGet();
-            if (failed) {
-                failuresCount.incrementAndGet();
-            }
-            log.trace("Processed doc {} in {} ms (failed={})", id, latencyMs, failed);
-        }
-    }
-
-
-    private List<String> processEditionIds(SolrDocument doc, CorrectionType correctionType){
+    private List<String> processEditionIds(SolrDocument doc, CorrectionType correctionType) {
 
 
         // todo: not implement
@@ -727,8 +519,14 @@ import java.util.concurrent.ThreadPoolExecutor;
     }
 
 
+    /**
+     * поиск редакций на основе списка редакций документа
+     * @param id
+     * @param editionList
+     * @return
+     */
     private List<String> listOfNonExistentDocumentIds(String id, List<String> editionList) {
-        List<String> notExistedEdition = new ArrayList<>();
+        List<String> missingEditionIds = new ArrayList<>();
 
         log.debug("id:{} , editions: {}", id, String.join(",", editionList));
         List<String> editionIds = EditionUtils.buildEditionIds(id, editionList);
@@ -744,21 +542,21 @@ import java.util.concurrent.ThreadPoolExecutor;
                 long count = solrClient.query(solrProperties.getEdition(), query).getResults().getNumFound();
                 if (count == 0) {
                     log.info("doc id:{},  has broken edition:{}", id, editionId);
-                    notExistedEdition.add(id);
+                    missingEditionIds.add(id);
                     break;
                 }
             } catch (SolrServerException e) {
-                notExistedEdition.add(id);
-                log.warn("Не найдена редакция:{}", editionId);
+                missingEditionIds.add(id);
+                log.debug("Не найдена редакция:{}", editionId);
             } catch (IOException e) {
                 log.error("Ошибка при проверке существования издания:{}, {}", editionId, e.getMessage());
             }
         }
-        return notExistedEdition;
+        return missingEditionIds;
     }
 
     private List<String> listOfNonExistentDocumentEditions(String id, List<String> editionList) {
-        List<String> notExistedEdition = new ArrayList<>();
+        List<String> missingEditionIds = new ArrayList<>();
 
         log.debug("id:{} , editions: {}", id, editionList);
         List<String> editionIds = EditionUtils.buildEditionIds(id, editionList);
@@ -776,14 +574,14 @@ import java.util.concurrent.ThreadPoolExecutor;
                     log.info("doc id:{}, has broken edition:{}", id, editionId);
 
                     // todo: редакции
-                    notExistedEdition.add(editionId);
+                    missingEditionIds.add(editionId);
                     break;
                 }
             } catch (SolrServerException | IOException e) {
                 log.error("Ошибка при проверке существования издания {}: {}", editionId, e.getMessage());
             }
         }
-        return notExistedEdition;
+        return missingEditionIds;
     }
 
     private int getDocumentsNumber(SolrQuery countQuery) {
@@ -823,6 +621,7 @@ import java.util.concurrent.ThreadPoolExecutor;
     }
 
     // Metrics accessors (used by tests)
+
     /**
      * Возвращает количество обработанных документов (включая успешно и с ошибкой).
      * Используется в тестах и для мониторинга.

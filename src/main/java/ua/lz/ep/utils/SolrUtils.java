@@ -2,7 +2,6 @@ package ua.lz.ep.utils;
 
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.util.ClientUtils;
-import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.dto.PeriodDocsRequest;
 
 import java.time.LocalDateTime;
@@ -38,7 +37,7 @@ public class SolrUtils {
     }
 
 
-    public static SolrQuery createCorrectRequest(PeriodDocsRequest periodRequest){
+    public static SolrQuery createMissingEditionSolrQuery(PeriodDocsRequest periodRequest){
         validatePeriodRequest(periodRequest);
 
        SolrQuery solrQuery = new SolrQuery();

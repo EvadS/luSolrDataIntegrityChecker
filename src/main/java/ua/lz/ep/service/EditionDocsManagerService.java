@@ -72,7 +72,7 @@ public class EditionDocsManagerService {
         processingTask.initialize(taskId, "Correction task queued for execution");
         taskRegistry.put(taskId, processingTask);
 
-        log.debug("Creating processing task {} for correction request: {}", taskId, periodRequest);
+        log.info("Creating processing task {} for correction request: {}", taskId, periodRequest);
 
         submitTask(processingTask, () -> {
 
