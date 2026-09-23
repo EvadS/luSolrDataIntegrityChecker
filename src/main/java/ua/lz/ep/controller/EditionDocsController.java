@@ -77,8 +77,8 @@ public class EditionDocsController implements EditionDocsControllerApi {
 
     @GetMapping(ApplicationConstants.MISSING_EDITIONS + "/tasks")
     public ResponseEntity<PageTaskStatus<TaskStatus>> getTasks(
-            @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Positive int size,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String sort) {
         PageRequest pageable = new PageRequest();
         pageable.setPage(page);

@@ -15,7 +15,7 @@
             <AppenderRef ref="Console"/>
         </Logger>
 
-        <Logger name="ua.lz.ep.service" level="DEBUG" additivity="false">
+        <Logger name="ua.lz.ep.service" level="INFO" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
 

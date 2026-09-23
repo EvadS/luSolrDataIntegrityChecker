@@ -92,4 +92,13 @@ public class SolrUtils {
                     formatForSolr(endPeriod)));
         }
     }
+
+
+//    public static SolrQuery createEditionIdMismatchRequest(PeriodRequest periodRequest) {
+//        validatePeriodRequest(periodRequest);
+//        List<String> filters = new ArrayList<>();
+//        addDocumentIdsFilter(periodRequest, filters);
+//        addPeriodFilter(periodRequest, filters);
+//        return buildSolrQuery(filters);
+//    }
 }

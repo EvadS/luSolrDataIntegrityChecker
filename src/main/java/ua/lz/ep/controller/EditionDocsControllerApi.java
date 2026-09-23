@@ -11,6 +11,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
 import ua.lz.ep.config.OpenApiConstants;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.response.PageTaskStatus;
@@ -77,6 +79,6 @@ public interface EditionDocsControllerApi {
             @ApiResponse(ref = OpenApiConstants.BAD_REQUEST_RESPONSE_REF),
             @ApiResponse(ref = OpenApiConstants.INTERNAL_SERVER_ERROR_RESPONSE_REF)
     })
-    org.springframework.http.ResponseEntity<PageTaskStatus<TaskStatus>> getTasks(int page, int size, String sort);
+    org.springframework.http.ResponseEntity<PageTaskStatus<TaskStatus>> getTasks(@Min(0) int page, @Positive int size, String sort);
 
 }

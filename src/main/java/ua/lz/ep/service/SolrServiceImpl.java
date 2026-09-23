@@ -1,6 +1,7 @@
 package ua.lz.ep.service;
 
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.lang3.NotImplementedException;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrServerException;
@@ -28,6 +29,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 @Log4j2
 @Service
@@ -254,14 +257,14 @@ public class SolrServiceImpl implements SolrService {
             int batchSize = batchDocuments.size();
 
             // Prepare futures for parallel processing while preserving order
-            java.util.concurrent.Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
+            Executor executor = correctionTaskExecutor.getThreadPoolExecutor();
             List<java.util.concurrent.CompletableFuture<java.util.List<String>>> futures = new ArrayList<>(batchSize);
 
             for (SolrDocument doc : batchDocuments) {
                 throwIfInterrupted("Correction processing was cancelled while iterating documents");
 
                 final SolrDocument curDoc = doc;
-                java.util.concurrent.CompletableFuture<java.util.List<String>> f = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                CompletableFuture<List<String>> f = CompletableFuture.supplyAsync(() -> {
                     long start = System.nanoTime();
                     String id = curDoc.getFieldValue(SolrConstants.FIELD_ID).toString();
                     boolean failed = false;
@@ -378,7 +381,12 @@ public class SolrServiceImpl implements SolrService {
             return listOfNonExistentDocumentIds(id, editionList);
         }
         return listOfNonExistentDocumentEditions(id, editionList);
+    }
 
+
+    private List<String> processEditionIDs(SolrDocument doc) {
+
+        throw new NotImplementedException("not implemented");
     }
 
     /**
@@ -429,6 +437,8 @@ public class SolrServiceImpl implements SolrService {
 
 
     private List<String> processEditionIds(SolrDocument doc, CorrectionType correctionType){
+
+
         // todo: not implement
         return Collections.emptyList();
     }
