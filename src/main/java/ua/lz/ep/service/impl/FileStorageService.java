@@ -54,7 +54,7 @@ public class FileStorageService implements StorageManager {
             Files.createFile(filePath); // если нужен именно явный create
 
         } catch (IOException e) {
-            log.error("Unable to create directories {}: {}", childPath, e.getMessage(), e);
+            log.error("Unable to create directories {}", childPath, e);
         }
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath.toFile()))) {
@@ -62,7 +62,7 @@ public class FileStorageService implements StorageManager {
                 writer.write(item + "\n");
             }
         }catch (IOException e){
-            log.error("Unable to save result to file {}: {}", filePath, e.getMessage(), e);
+            log.error("Unable to save result to file {}", filePath, e);
         }
     }
 }

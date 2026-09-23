@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class SolrServiceImpl implements SolrService {
 
     private static final int BATCH_SIZE = 5000;
+    private static final int SOLR_QUERY_TIME_ALLOWED_MS = 60_000;
     private final SolrClient solrClient;
     private final SolrProperties solrProperties;
     private final Environment environment;
@@ -91,15 +92,6 @@ public class SolrServiceImpl implements SolrService {
     private String resolveActiveEnvironment() {
         String[] activeProfiles = environment.getActiveProfiles();
         return activeProfiles.length == 0 ? "default" : String.join(",", Arrays.asList(activeProfiles));
-    }
-
-    private void validateCollectionConnection(String collectionPropertyName, String collectionName) {
-
-        if (!pingCollection(collectionName)) {
-            throw new IllegalStateException("Failed to establish Solr connection for " + collectionPropertyName + "='" + collectionName + "'");
-        }
-
-        log.info("Solr connection established for {}='{}'", collectionPropertyName, collectionName);
     }
 
     /**
@@ -172,7 +164,7 @@ public class SolrServiceImpl implements SolrService {
                         } catch (CancellationException e) {
                             throw e;
                         } catch (Exception e) {
-                            log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                            log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
                             failuresCount.incrementAndGet();
                             return List.of(id == null ? "<unknown>" : id);
                         } finally {
@@ -191,7 +183,7 @@ public class SolrServiceImpl implements SolrService {
                         List<String> syncResult = processMissingEditionsDocument(curDoc, periodRequest.getCorrectionType());
                         f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
                     } catch (Exception e) {
-                        log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                    log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
                         failuresCount.incrementAndGet();
                         f = CompletableFuture.completedFuture(List.of(id == null ? "<unknown>" : id));
                     } finally {
@@ -292,7 +284,7 @@ public class SolrServiceImpl implements SolrService {
                         } catch (CancellationException e) {
                             throw e;
                         } catch (Exception e) {
-                            log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                            log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
                             failuresCount.incrementAndGet();
                             return java.util.List.of(id == null ? "<unknown>" : id);
                         } finally {
@@ -310,7 +302,7 @@ public class SolrServiceImpl implements SolrService {
                         java.util.List<String> syncResult = processEditionDiffIds(curDoc, editionListDiff.getDiffResultType());
                         f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
                     } catch (Exception e) {
-                        log.warn("Error processing doc {}: {}", id == null ? "<unknown>" : id, e.getMessage());
+                        log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
                         failuresCount.incrementAndGet();
                         f = java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of(id == null ? "<unknown>" : id));
                     } finally {
@@ -379,53 +371,6 @@ public class SolrServiceImpl implements SolrService {
 
         return missMatchingEditionList;
     }
-
-    private List<String> processEditionIDsWithRetries(SolrDocument curDoc, EditionDiffResultType diffResultType) {
-        long start = System.nanoTime();
-        String id = null;
-        boolean failed = false;
-        List<String> resultList = null;
-        try {
-            // Ensure id is present and valid before processing; missing id is a bad document and should fail fast
-            id = extractIdSafely(curDoc);
-
-            int attempt = 0;
-            while (true) {
-                attempt++;
-                try {
-                    resultList = processEditionDiffIds(curDoc, diffResultType);
-                    break;
-                } catch (CancellationException e) {
-                    throw e;
-                } catch (Exception e) {
-                    log.warn("Error processing doc {} (attempt {}): {}", id, attempt, e.getMessage());
-                    if (attempt >= correctionProperties.getMaxRetries()) {
-                        log.error("Exceeded retries for doc {} - marking as failed", id, e);
-                        failed = true;
-                        resultList = java.util.List.of(id);
-                        break;
-                    }
-                    try {
-                        Thread.sleep(100L * attempt);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new CancellationException("Interrupted during retry backoff");
-                    }
-                }
-            }
-            return resultList;
-        } finally {
-            long end = System.nanoTime();
-            long latencyMs = (end - start) / 1_000_000;
-            totalLatencyMs.addAndGet(latencyMs);
-            processedCount.incrementAndGet();
-            if (failed) {
-                failuresCount.incrementAndGet();
-            }
-            log.trace("Processed doc {} in {} ms (failed={})", id == null ? "<unknown>" : id, latencyMs, failed);
-        }
-    }
-
 
     private void updateProcessedDocumentInProcessingTask(ProcessingTask processingTask, int currentPositions) {
         if (processingTask != null) {
@@ -540,7 +485,8 @@ public class SolrServiceImpl implements SolrService {
     private List<String> listOfNonExistentDocumentIds(String id, List<String> editionList) {
         List<String> missingEditionIds = new ArrayList<>();
 
-        log.debug("id:{} , editions: {}", id, String.join(",", editionList));
+        String editionsStr = (editionList == null) ? "" : String.join(",", editionList);
+        log.debug("id:{} , editions: {}", id, editionsStr);
         List<String> editionIds = EditionUtils.buildEditionIds(id, editionList);
 
         for (String editionId : editionIds) {
@@ -561,7 +507,7 @@ public class SolrServiceImpl implements SolrService {
                 missingEditionIds.add(id);
                 log.debug("Не найдена редакция:{}", editionId);
             } catch (IOException e) {
-                log.error("Ошибка при проверке существования издания:{}, {}", editionId, e.getMessage());
+            log.error("Ошибка при проверке существования издания: {}", editionId, e);
             }
         }
         return missingEditionIds;
@@ -590,7 +536,7 @@ public class SolrServiceImpl implements SolrService {
                     break;
                 }
             } catch (SolrServerException | IOException e) {
-                log.error("Ошибка при проверке существования издания {}: {}", editionId, e.getMessage());
+                log.error("Ошибка при проверке существования издания {}", editionId, e);
             }
         }
         return missingEditionIds;
@@ -601,6 +547,7 @@ public class SolrServiceImpl implements SolrService {
             throw new IllegalArgumentException("SolrQuery must not be null");
         }
         countQuery.setRows(0);
+        applyQueryTimeout(countQuery);
 
         try {
             QueryResponse response = solrClient.query(solrProperties.getCollection1(), countQuery);
@@ -664,4 +611,16 @@ public class SolrServiceImpl implements SolrService {
         int count = processedCount.get();
         return count == 0 ? 0.0 : (double) totalLatencyMs.get() / count;
     }
+
+    private void applyQueryTimeout(SolrQuery query) {
+        if (query == null) {
+            throw new IllegalArgumentException("SolrQuery must not be null");
+        }
+        query.setTimeAllowed(SOLR_QUERY_TIME_ALLOWED_MS);
+    }
+
 }
+
+
+
+
