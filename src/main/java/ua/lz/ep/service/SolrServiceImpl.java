@@ -46,6 +46,7 @@ public class SolrServiceImpl implements SolrService {
     private final ua.lz.ep.config.CorrectionProperties correctionProperties;
 
     private final ProgressReporter progressReporter;
+;
 
     // simple metrics exposed for tests: processed count, failures and total latency
     private final AtomicInteger processedCount = new AtomicInteger(0);
@@ -198,14 +199,16 @@ public class SolrServiceImpl implements SolrService {
             }
 
             // Wait for completion and preserve order by iterating futures in same order
-            for (java.util.concurrent.CompletableFuture<java.util.List<String>> future : futures) {
+            for (int fi = 0; fi < futures.size(); fi++) {
+                CompletableFuture<List<String>> future = futures.get(fi);
                 try {
-                    java.util.List<String> editions = future.join();
+                    List<String> editions = future.join();
                     if (editions != null && !editions.isEmpty()) {
                         missingEditionIds.addAll(editions);
                     }
                 } catch (CancellationException e) {
                     log.error("Processing was cancelled while waiting for a document to finish", e);
+                    cancelRemainingFutures(futures, fi + 1);
                     Thread.currentThread().interrupt();
                     throw e;
                 } catch (Exception e) {
@@ -610,6 +613,19 @@ public class SolrServiceImpl implements SolrService {
             throw new IllegalArgumentException("SolrQuery must not be null");
         }
         query.setTimeAllowed(SOLR_QUERY_TIME_ALLOWED_MS);
+    }
+
+    private void cancelRemainingFutures(List<CompletableFuture<List<String>>> futures, int fromIndex) {
+        for (int idx = fromIndex; idx < futures.size(); idx++) {
+            CompletableFuture<List<String>> toCancel = futures.get(idx);
+            if (!toCancel.isDone() && !toCancel.isCancelled()) {
+                try {
+                    toCancel.cancel(true);
+                } catch (Exception cancelEx) {
+                    log.warn("Failed to cancel future #{}", idx, cancelEx);
+                }
+            }
+        }
     }
 
 }
