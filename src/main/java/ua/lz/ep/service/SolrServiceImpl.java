@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import ua.lz.ep.component.ProgressReporter;
 import ua.lz.ep.config.SolrProperties;
 import ua.lz.ep.dto.EditionListDiff;
+import ua.lz.ep.dto.PeriodDocsRequest;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.payload.ProcessingTask;
 import ua.lz.ep.payload.enums.CorrectionType;
@@ -129,7 +130,7 @@ public class SolrServiceImpl implements SolrService {
         int totalDocuments;
         int currentItem = 0;
 
-        SolrQuery solrQuery = SolrUtils.createMissingEditionSolrQuery(periodRequest);
+        SolrQuery solrQuery = SolrUtils.createEditionIdsRequest(periodRequest);
         totalDocuments = getDocumentsNumber(solrQuery);
         updateDocumentInProcessingTask(processingTask, totalDocuments);
 
@@ -241,6 +242,124 @@ public class SolrServiceImpl implements SolrService {
         }
 
         return missingEditionIds;
+    }
+
+    @Override
+    public List<String> findInvalidFirstDate(PeriodDocsRequest periodRequest, ProcessingTask processingTask) {
+        List<String> invalidFirstDateIds = new ArrayList<>();
+        int currentPositions = 0;
+        int totalDocuments;
+        int currentItem = 0;
+
+        SolrQuery solrQuery = SolrUtils.createMissingEditionSolrQuery(periodRequest);
+        totalDocuments = getDocumentsNumber(solrQuery);
+        updateDocumentInProcessingTask(processingTask, totalDocuments);
+
+        log.info("Start invalid-first-date processing for {} documents", totalDocuments);
+        while (true) {
+            throwIfInterrupted("Invalid-first-date processing was cancelled before reading the next batch");
+
+            SolrDocumentList batchDocuments = executeBatchQuery(solrQuery, currentPositions);
+            if (batchDocuments == null || batchDocuments.isEmpty()) {
+                break;
+            }
+
+            int batchSize = batchDocuments.size();
+
+            ThreadPoolExecutor underlying = correctionTaskExecutor.getThreadPoolExecutor();
+            Executor executor = underlying;
+
+            List<CompletableFuture<List<String>>> futures = new ArrayList<>(batchSize);
+
+            for (SolrDocument doc : batchDocuments) {
+                throwIfInterrupted("Invalid-first-date processing was cancelled while iterating documents");
+
+                final SolrDocument curDoc = doc;
+                CompletableFuture<List<String>> f;
+                try {
+                    f = CompletableFuture.supplyAsync(() -> {
+                        long start = System.nanoTime();
+                        String id = null;
+                        try {
+                            id = extractIdSafely(curDoc);
+                            return processEditionFirstDate(curDoc);
+                        } catch (CancellationException e) {
+                            throw e;
+                        } catch (Exception e) {
+                            log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
+                            failuresCount.incrementAndGet();
+                            return List.of(id == null ? "<unknown>" : id);
+                        } finally {
+                            long end = System.nanoTime();
+                            long latencyMs = (end - start) / 1_000_000;
+                            totalLatencyMs.addAndGet(latencyMs);
+                            processedCount.incrementAndGet();
+                        }
+                    }, executor);
+                } catch (RejectedExecutionException ree) {
+                    long start = System.nanoTime();
+                    String id = null;
+                    try {
+                        id = extractIdSafely(curDoc);
+                        List<String> syncResult = processEditionFirstDate(curDoc);
+                        f = java.util.concurrent.CompletableFuture.completedFuture(syncResult);
+                    } catch (Exception e) {
+                        log.warn("Error processing doc {}", id == null ? "<unknown>" : id, e);
+                        failuresCount.incrementAndGet();
+                        f = CompletableFuture.completedFuture(List.of(id == null ? "<unknown>" : id));
+                    } finally {
+                        long end = System.nanoTime();
+                        long latencyMs = (end - start) / 1_000_000;
+                        totalLatencyMs.addAndGet(latencyMs);
+                        processedCount.incrementAndGet();
+                    }
+                }
+
+                futures.add(f);
+            }
+
+            for (int fi = 0; fi < futures.size(); fi++) {
+                CompletableFuture<List<String>> future = futures.get(fi);
+                try {
+                    List<String> invalids = future.join();
+                    if (invalids != null && !invalids.isEmpty()) {
+                        invalidFirstDateIds.addAll(invalids);
+                    }
+                } catch (CancellationException e) {
+                    log.error("Processing was cancelled while waiting for a document to finish", e);
+                    cancelRemainingFutures(futures, fi + 1);
+                    Thread.currentThread().interrupt();
+                    throw e;
+                } catch (Exception e) {
+                    log.error("Unexpected error while processing document batch", e);
+                }
+            }
+
+            currentItem += batchDocuments.size();
+            if (processingTask != null && totalDocuments > 0) {
+                int percent = (int) Math.min(100, Math.round((currentItem * 100.0) / totalDocuments));
+                processingTask.updateProgress(percent, "Processed " + currentItem + " of " + totalDocuments + " documents");
+            }
+
+            if (batchDocuments.size() < BATCH_SIZE) {
+                break;
+            }
+
+            currentPositions += batchDocuments.size();
+            progressReporter.reportProgress(currentItem, totalDocuments, batchDocuments.size());
+
+            updateProcessedDocumentInProcessingTask(processingTask, currentPositions);
+        }
+
+        if (processingTask != null) {
+            if (totalDocuments == 0) {
+                processingTask.updateProgress(100, "No documents matched the request");
+            } else {
+                processingTask.updateProgress(100, "Finished processing documents");
+            }
+        }
+
+        return invalidFirstDateIds;
     }
 
     @Override
@@ -416,6 +535,25 @@ public class SolrServiceImpl implements SolrService {
             return listOfNonExistentDocumentIds(id, editionList);
         }
         return listOfNonExistentDocumentEditions(id, editionList);
+    }
+
+    private List<String> processEditionFirstDate(SolrDocument doc) {
+        String id = extractIdSafely(doc);
+
+        Object editionListFullObj = doc.getFieldValue(SolrConstants.FIELD_EDITION_LIST_FULL);
+        List<String> editionListFull = MappingFieldsHelper.objectToStringList(editionListFullObj);
+
+        if (editionListFull == null || editionListFull.size() <= 1) {
+            return Collections.emptyList();
+        }
+
+        for (String value : editionListFull) {
+            if ("0000_00_00".equals(value)) {
+                return Collections.emptyList();
+            }
+        }
+
+        return List.of(id);
     }
 
 
@@ -629,7 +767,4 @@ public class SolrServiceImpl implements SolrService {
     }
 
 }
-
-
-
 

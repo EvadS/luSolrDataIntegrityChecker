@@ -9,6 +9,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import ua.lz.ep.config.ApplicationConstants;
+import ua.lz.ep.dto.PeriodDocsRequest;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.EditionListDiff;
 import ua.lz.ep.dto.request.PageRequest;
@@ -46,6 +47,61 @@ public class EditionDocsController implements EditionDocsControllerApi {
         return ResponseEntity.accepted()
                 .header(HttpHeaders.LOCATION, statusUrl)
                 .body(response);
+    }
+
+    @PostMapping(path = {ApplicationConstants.INVALID_FIRST_DATE})
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ResponseEntity<TaskSubmissionResponse> createInvalidFirstDateTask(
+            @Valid @org.springframework.web.bind.annotation.RequestBody PeriodDocsRequest periodRequest,
+            HttpServletRequest request) {
+        ProcessingTask processingTask = new ProcessingTask();
+
+        String id = managerService.submitInvalidFirstDateTask(processingTask, periodRequest);
+        String statusUrl = request.getContextPath() + ApplicationConstants.DOCUMENTS_API + ApplicationConstants.INVALID_FIRST_DATE + "/tasks/" + id;
+        TaskSubmissionResponse response = new TaskSubmissionResponse(id, "PENDING", statusUrl, statusUrl);
+
+        return ResponseEntity.accepted()
+                .header(HttpHeaders.LOCATION, statusUrl)
+                .body(response);
+    }
+
+    @GetMapping(ApplicationConstants.INVALID_FIRST_DATE + "/tasks/{id}")
+    public ResponseEntity<?> getInvalidFirstDateTaskStatus(
+            @PathVariable("id") String taskId,
+            HttpServletRequest request) {
+        TaskStatus taskStatus = managerService.getTaskStatus(taskId);
+        if (taskStatus == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND, "Task '" + taskId + "' was not found.", request.getRequestURI()));
+        }
+        return ResponseEntity.ok(taskStatus);
+    }
+
+    @DeleteMapping(ApplicationConstants.INVALID_FIRST_DATE + "/tasks/{id}")
+    public ResponseEntity<?> cancelInvalidFirstDateTask(
+            @PathVariable("id") String taskId,
+            HttpServletRequest request) {
+        TaskStatus currentStatus = managerService.getTaskStatus(taskId);
+        if (currentStatus == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiErrorResponse.of(HttpStatus.NOT_FOUND, "Task '" + taskId + "' was not found.", request.getRequestURI()));
+        }
+
+        managerService.stopTask(taskId);
+        return ResponseEntity.ok(managerService.getTaskStatus(taskId));
+    }
+
+    @GetMapping(ApplicationConstants.INVALID_FIRST_DATE + "/tasks")
+    public ResponseEntity<PageTaskStatus<TaskStatus>> getInvalidFirstDateTasks(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sort) {
+        PageRequest pageable = new PageRequest();
+        pageable.setPage(page);
+        pageable.setSize(size);
+        pageable.setSort(sort);
+
+        return ResponseEntity.ok(managerService.findAll(pageable));
     }
 
     @GetMapping(ApplicationConstants.MISSING_EDITIONS + "/tasks/{id}")

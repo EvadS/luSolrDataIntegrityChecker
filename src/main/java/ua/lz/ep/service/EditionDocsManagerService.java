@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import ua.lz.ep.dto.EditionListDiff;
+import ua.lz.ep.dto.PeriodDocsRequest;
 import ua.lz.ep.dto.PeriodRequest;
 import ua.lz.ep.dto.payload.ProcessingResult;
 import ua.lz.ep.dto.request.PageRequest;
@@ -88,6 +89,32 @@ public class EditionDocsManagerService {
             storageManager.storedReportData(processingResul);
             processingTask.updateProgress(100, "Correction finished. Found " + brokenCount + " problematic items.");
         }, "Correction completed successfully");
+
+        return taskId;
+    }
+
+    /**
+     * Submit an invalid-first-date correction task for asynchronous execution.
+     */
+    public String submitInvalidFirstDateTask(ProcessingTask processingTask, PeriodDocsRequest periodRequest) {
+        String taskId = resolveTaskId(processingTask);
+        processingTask.initialize(taskId, "Invalid-first-date task queued for execution");
+        taskRegistry.put(taskId, processingTask);
+
+        log.info("Creating invalid-first-date processing task {} for correction request: {}", taskId, periodRequest);
+
+        submitTask(processingTask, () -> {
+            LocalDateTime startProcessingTime = LocalDateTime.now();
+            List<String> invalidFirstDates = solrService.findInvalidFirstDate(periodRequest, processingTask);
+            int invalidCount = invalidFirstDates == null ? 0 : invalidFirstDates.size();
+
+            ProcessingResult processingResul = new ProcessingResult();
+            processingResul.getLostEditions().addAll(invalidFirstDates);
+            processingResul.setProcessingStartTime(startProcessingTime);
+
+            storageManager.storedReportData(processingResul);
+            processingTask.updateProgress(100, "Invalid-first-date finished. Found " + invalidCount + " problematic items.");
+        }, "Invalid-first-date completed successfully");
 
         return taskId;
     }
