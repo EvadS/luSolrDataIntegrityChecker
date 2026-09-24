@@ -468,15 +468,8 @@ public class SolrServiceImpl implements SolrService {
         return diffIds;
     }
 
-    private List<String> processEditionIds(SolrDocument doc, CorrectionType correctionType) {
-
-
-        // todo: not implement
-        return Collections.emptyList();
-    }
-
-
     /**
+     * поиск редакций на основе списка редакций документа
      * поиск редакций на основе списка редакций документа
      * @param id
      * @param editionList
